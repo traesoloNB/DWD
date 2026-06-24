@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DWD RG 风险等级计算器</title>
+  <script src='https://unpkg.com/tesseract.js@4.1.1/dist/tesseract.min.js'></script>
+  <style>
+    :root {
+      --bg: #f0f4f8;
+      --card: #fff;
+      --border: #d0dae4;
+      --text: #1a2b3c;
+      --muted: #5a6b7c;
+      --accent: #1565c0;
+      --accent-light: #e3f2fd;
+      --rg1: #b71c1c;
+      --rg2: #e65100;
+      --rg3: #f9a825;
+      --rg4: #2e7d32;
+      --shadow: 0 2px 12px rgba(0,0,0,.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    header {
+      background: linear-gradient(135deg, #0d47a1, #1565c0);
+      color: #fff;
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: .75rem;
+    }
+    header h1 { font-size: 1.35rem; font-weight: 600; }
+    header p { font-size: .85rem; opacity: .9; }
+    .header-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .btn {
+      border: none;
+      border-radius: 6px;
+      padding: .45rem 1rem;
+      font-size: .85rem;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .15s, transform .1s;
+    }
+    .btn:active { transform: scale(.98); }
+    .btn-primary { background: #fff; color: var(--accent); font-weight: 600; }
+    .btn-primary:hover { background: #e3f2fd; }
+    .btn-secondary { background: rgba(255,255,255,.2); color: #fff; border: 1px solid rgba(255,255,255,.4); }
+    .btn-secondary:hover { background: rgba(255,255,255,.3); }
+    .btn-outline { background: var(--card); color: var(--accent); border: 1px solid var(--border); }
+    .btn-outline:hover { background: var(--accent-light); }
+    .btn-danger { background: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
+    .btn-danger:hover { background: #ffcdd2; }
+    .btn-sm { padding: .3rem .65rem; font-size: .78rem; }
+    main { max-width: 1400px; margin: 0 auto; padding: 1.25rem; }
+    .settings-bar {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1rem;
+      align-items: end;
+    }
+    .field label {
+      display: block;
+      font-size: .78rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: .3rem;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+    .field input, .field select {
+      width: 100%;
+      padding: .45rem .6rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: .9rem;
+      font-family: inherit;
+    }
+    .field input:focus, .field select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(21,101,192,.15);
+    }
+    .product-banner {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .product-banner h2 {
+      font-size: .85rem;
+      color: var(--muted);
+      margin-bottom: .75rem;
+      text-align: left;
+    }
+    .img-drop {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      min-height: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      overflow: hidden;
+      position: relative;
+      background: #fafbfc;
+      transition: border-color .2s;
+    }
+    .img-drop:hover { border-color: var(--accent); }
+    .img-drop img { max-width: 100%; max-height: 220px; object-fit: contain; }
+    .img-drop .placeholder { color: var(--muted); font-size: .85rem; pointer-events: none; }
+    .img-drop input { display: none; }
+    .main-grid {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    @media (max-width: 900px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+    .structure-panel, .bom-panel {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 1rem;
+      box-shadow: var(--shadow);
+    }
+    .panel-title {
+      font-size: .95rem;
+      font-weight: 700;
+      margin-bottom: .75rem;
+      padding-bottom: .5rem;
+      border-bottom: 2px solid var(--accent-light);
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .panel-title span { font-size: .75rem; color: var(--muted); font-weight: 400; }
+    .structure-panel .img-drop { min-height: 360px; }
+    .table-wrap { overflow-x: auto; }
+    table.bom {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .82rem;
+    }
+    table.bom th {
+      background: #263238;
+      color: #fff;
+      padding: .5rem .4rem;
+      text-align: left;
+      white-space: nowrap;
+      font-weight: 600;
+      font-size: .75rem;
+    }
+    table.bom td { padding: .35rem .3rem; border-bottom: 1px solid #eee; vertical-align: middle; }
+    table.bom tr:hover td { background: #f5f9ff; }
+    table.bom input, table.bom select {
+      width: 100%;
+      padding: .3rem .4rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: .8rem;
+      font-family: inherit;
+    }
+    table.bom input[type=number] { text-align: right; }
+    .col-narrow { width: 42px; }
+    .col-sm { width: 70px; }
+    .col-md { width: 100px; }
+    .rg-badge {
+      display: inline-block;
+      padding: .15rem .5rem;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: .78rem;
+      color: #fff;
+      min-width: 36px;
+      text-align: center;
+    }
+    .rg-RG1 { background: var(--rg1); }
+    .rg-RG2 { background: var(--rg2); }
+    .rg-RG3 { background: var(--rg3); color: #333; }
+    .rg-RG4 { background: var(--rg4); }
+    .rg-— { background: #bdbdbd; color: #555; }
+    .mat-chip {
+      display: inline-block;
+      padding: .1rem .45rem;
+      border-radius: 3px;
+      font-size: .72rem;
+      font-weight: 600;
+      border: 1px solid rgba(0,0,0,.1);
+    }
+    .total-row td {
+      font-weight: 700;
+      background: #eceff1 !important;
+      border-top: 2px solid var(--border);
+    }
+    .total-warn { color: #e65100; }
+    .total-ok { color: var(--rg4); }
+    .bom-actions {
+      margin-top: .75rem;
+      display: flex;
+      gap: .5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .bom-actions .hint { font-size: .78rem; color: var(--muted); margin-left: auto; }
+    .summary-section {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 1.25rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1rem;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 1.5rem;
+      align-items: start;
+    }
+    @media (max-width: 800px) {
+      .summary-grid { grid-template-columns: 1fr; }
+    }
+    table.summary {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .88rem;
+    }
+    table.summary th {
+      background: #37474f;
+      color: #fff;
+      padding: .6rem .75rem;
+      text-align: left;
+    }
+    table.summary td {
+      padding: .55rem .75rem;
+      border-bottom: 1px solid #eee;
+    }
+    table.summary tr:last-child td { border-bottom: none; }
+    table.summary .pct { font-weight: 700; font-size: 1rem; text-align: right; }
+    table.summary .cf { color: var(--muted); font-size: .82rem; }
+    .summation-note {
+      background: #fff8e1;
+      border-left: 4px solid #f9a825;
+      padding: .75rem 1rem;
+      border-radius: 0 6px 6px 0;
+      font-size: .82rem;
+      margin-bottom: 1rem;
+    }
+    .cf-ref {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 1rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1rem;
+    }
+    .cf-ref summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--accent);
+      padding: .25rem 0;
+    }
+    .cf-ref table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .75rem;
+      margin-top: .75rem;
+    }
+    .cf-ref th, .cf-ref td {
+      border: 1px solid var(--border);
+      padding: .35rem .5rem;
+      text-align: center;
+    }
+    .cf-ref th { background: #eceff1; }
+    .cf-ref .highlight { background: #e3f2fd; font-weight: 700; }
+    .quote-box {
+      background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+      border: 1px solid #a5d6a7;
+      border-radius: 8px;
+      padding: 1rem;
+    }
+    .quote-box h3 { font-size: .9rem; margin-bottom: .5rem; color: #2e7d32; }
+    .quote-item {
+      display: flex;
+      justify-content: space-between;
+      padding: .35rem 0;
+      border-bottom: 1px dashed #c8e6c9;
+      font-size: .85rem;
+    }
+    .quote-item:last-child { border-bottom: none; font-weight: 700; font-size: .95rem; padding-top: .5rem; }
+    .rg-bar-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .4rem; font-size: .78rem; }
+    .rg-bar-label { width: 32px; font-weight: 700; }
+    .rg-bar-track { flex: 1; height: 18px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
+    .rg-bar-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+    .rg-bar-count { width: 48px; text-align: right; color: var(--muted); }
+    .upgraded-hint {
+      font-size: .75rem;
+      color: #e65100;
+      margin-top: .5rem;
+    }
+    .arrow-annotation {
+      text-align: center;
+      color: var(--accent);
+      font-size: .78rem;
+      font-weight: 600;
+      padding: .25rem;
+    }
+
+    /* BOM Lock */
+    .bom-locked {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+      position: relative;
+    }
+    .bom-locked::before {
+      content: '🔒 已锁定 — 点击上方按钮解锁';
+      position: absolute;
+      top: -22px;
+      right: 0;
+      background: var(--accent);
+      color: #fff;
+      font-size: .7rem;
+      padding: .15rem .5rem;
+      border-radius: 3px 3px 0 0;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .bom-locked input, .bom-locked select, .bom-locked button {
+      pointer-events: none !important;
+      user-select: none !important;
+    }
+    .lock-btn {
+      background: #fff3e0;
+      color: #e65100;
+      border: 1px solid #ffe082;
+    }
+    .lock-btn:hover { background: #ffe082; }
+
+    /* OCR Upload */
+    .ocr-panel {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 1rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1rem;
+    }
+    .ocr-drop {
+      border: 2px dashed var(--accent);
+      border-radius: 8px;
+      padding: 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      background: var(--accent-light);
+      transition: all .2s;
+    }
+    .ocr-drop:hover { background: #bbdefb; }
+    .ocr-drop.dragover { background: #90caf9; border-color: #0d47a1; }
+    .ocr-progress {
+      margin-top: .75rem;
+      font-size: .85rem;
+      color: var(--accent);
+    }
+    .ocr-result-panel {
+      margin-top: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .ocr-result-header {
+      background: #eceff1;
+      padding: .6rem .75rem;
+      font-weight: 600;
+      font-size: .85rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .ocr-result-body {
+      max-height: 320px;
+      overflow-y: auto;
+      padding: .5rem;
+    }
+    .ocr-row {
+      display: grid;
+      grid-template-columns: 40px 1fr 80px 100px 70px 80px;
+      gap: .3rem;
+      padding: .3rem;
+      border-bottom: 1px solid #eee;
+      align-items: center;
+      font-size: .8rem;
+    }
+    .ocr-row:hover { background: #f5f9ff; }
+    .ocr-row input, .ocr-row select {
+      padding: .2rem .3rem;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-size: .78rem;
+      width: 100%;
+    }
+    .ocr-row .ocr-num { text-align: center; color: var(--muted); }
+    .ocr-row .ocr-conf {
+      font-size: .7rem;
+      padding: .1rem .3rem;
+      border-radius: 3px;
+      text-align: center;
+    }
+    .ocr-conf-high { background: #e8f5e9; color: #2e7d32; }
+    .ocr-conf-med { background: #fff8e1; color: #f57f17; }
+    .ocr-conf-low { background: #ffebee; color: #c62828; }
+    .ocr-actions {
+      padding: .6rem .75rem;
+      background: #fafbfc;
+      display: flex;
+      gap: .5rem;
+      justify-content: flex-end;
+    }
+
+    @media print {
+      header .header-actions, .bom-actions, .cf-ref, .settings-bar .field:last-child, .ocr-panel { display: none; }
+      body { background: #fff; }
+      .img-drop { border: 1px solid #ccc; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>DWD RG 风险等级计算器</h1>
+    <p>Summation Rule · CF 转换因子 · Risk Group 判定 · 报价参考 · 爆炸图识别</p>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-secondary" onclick="loadExample()">加载龙头案例</button>
+    <button class="btn btn-secondary" onclick="loadKitchenFaucetExample()">加载厨房龙头案例</button>
+    <button class="btn btn-secondary" onclick="copyQuote()">复制报价摘要</button>
+    <button class="btn btn-secondary" onclick="window.print()">打印 / 导出 PDF</button>
+  </div>
+</header>
+
+<main>
+  <!-- OCR Upload Panel -->
+  <div class="ocr-panel">
+    <div class="panel-title">🤖 爆炸图智能识别 <span>上传 PDF 或图片，自动提取 BOM 数据</span></div>
+    <div class="ocr-drop" id="ocrDrop" onclick="document.getElementById('ocrInput').click()">
+      <div style="font-size:1.5rem;margin-bottom:.3rem">📄</div>
+      <div style="font-weight:600;color:var(--accent)">点击上传爆炸图 或 拖拽到此处</div>
+      <div style="font-size:.78rem;color:var(--muted);margin-top:.3rem">支持 PDF、PNG、JPG · 自动识别 BOM 表格</div>
+      <input type="file" id="ocrInput" accept=".pdf,image/*" style="display:none" onchange="handleOCRUpload(this)">
+    </div>
+    <div class="ocr-progress" id="ocrProgress"></div>
+    <div id="ocrResultPanel" style="display:none">
+      <div class="ocr-result-panel">
+        <div class="ocr-result-header">
+          <span>识别结果 — 请检查并确认</span>
+          <span style="font-size:.75rem;color:var(--muted)">绿色=高置信度 黄色=中置信度 红色=需人工确认</span>
+        </div>
+        <div class="ocr-result-body" id="ocrResultBody"></div>
+        <div class="ocr-actions">
+          <button class="btn btn-outline btn-sm" onclick="clearOCR()">清空</button>
+          <button class="btn btn-primary btn-sm" onclick="applyOCRToBOM()">✓ 确认并填充到 BOM</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings-bar">
+    <div class="field">
+      <label>产品名称</label>
+      <input type="text" id="productName" value="Example Sanitary Tap" oninput="recalc()">
+    </div>
+    <div class="field">
+      <label>产品类型</label>
+      <select id="productType" onchange="onProductTypeChange(); recalc()">
+        <option value="fitting" selected>配件 / 龙头 (Fittings, Ancillaries)</option>
+        <option value="storage">储水系统 (Storage Systems)</option>
+        <option value="pipe">管道 (Pipes — 独立产品)</option>
+      </select>
+    </div>
+    <div class="field" id="applicationField">
+      <label>应用场景 / 管径</label>
+      <select id="application" onchange="recalc()">
+        <option value="0" selected>Domestic · ID &lt; 80 mm</option>
+        <option value="1">Service · 80–300 mm</option>
+        <option value="2">Mains · ID ≥ 300 mm</option>
+      </select>
+    </div>
+    <div class="field" id="storageField" style="display:none">
+      <label>储水应用场景</label>
+      <select id="storageApp" onchange="recalc()">
+        <option value="0">Domestic · 容积 &lt; 10 L</option>
+        <option value="1">Domestic · 容积 ≥ 10 L</option>
+        <option value="2">Water supply 供水系统</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>总 Wetted Surface (cm²) — 可选</label>
+      <input type="number" id="totalArea" placeholder="自动合计" step="0.01" min="0" oninput="recalc()">
+    </div>
+  </div>
+
+  <!-- Product image top -->
+  <div class="product-banner">
+    <h2>产品图片 Product Image</h2>
+    <div class="img-drop" id="productImgDrop" onclick="document.getElementById('productImgInput').click()">
+      <span class="placeholder">点击上传产品图片</span>
+      <input type="file" id="productImgInput" accept="image/*" onchange="previewImg(this,'productImgDrop')">
+    </div>
+  </div>
+
+  <!-- Structure + BOM -->
+  <div class="main-grid">
+    <div class="structure-panel">
+      <div class="panel-title">产品结构图 <span>Structure / BOM Drawing</span></div>
+      <div class="img-drop" id="structureImgDrop" onclick="document.getElementById('structureImgInput').click()">
+        <span class="placeholder">点击上传结构图<br><small>（标注零件编号）</small></span>
+        <input type="file" id="structureImgInput" accept="image/*" onchange="previewImg(this,'structureImgDrop')">
+      </div>
+      <div class="arrow-annotation" style="margin-top:.75rem">↓ Summation Rule：同种主聚合物加总</div>
+    </div>
+    <div class="bom-panel">
+      <div class="panel-title">Table A7-1 · BOM 物料清单 <span>Bill of Materials</span></div>
+      <div class="table-wrap">
+        <table class="bom" id="bomTable">
+          <thead>
+            <tr>
+              <th class="col-narrow">No.</th>
+              <th>PART</th>
+              <th class="col-sm">Qty</th>
+              <th>MATERIAL</th>
+              <th class="col-sm">类型</th>
+              <th class="col-md">面积 cm²</th>
+              <th class="col-sm">% WS</th>
+              <th class="col-sm">RG 单件</th>
+              <th class="col-sm">RG 加总</th>
+              <th class="col-narrow"></th>
+            </tr>
+          </thead>
+          <tbody id="bomBody"></tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="5">TOTAL</td>
+              <td id="totalAreaCell">—</td>
+              <td id="totalPctCell">—</td>
+              <td colspan="3"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="bom-actions">
+        <button class="btn btn-outline btn-sm" onclick="addRow()">+ 添加零件行</button>
+        <button class="btn btn-outline btn-sm" onclick="addRow(5)">+ 添加 5 行</button>
+        <button class="lock-btn" id="bomLockBtn" onclick="toggleBomLock()">🔓 锁定数据</button>
+        <span class="hint">% WS = 该零件对整件产品的 wetted surface 占比（已含数量）；Qty&gt;1 时请填合计 %</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- RG Summary -->
+  <div class="summary-section">
+    <div class="panel-title" style="border:none;padding:0;margin-bottom:1rem">
+      Table A7-2 · RG 风险等级汇总 <span>Summation Rule — Organics</span>
+    </div>
+    <div class="summation-note" id="summationNote">
+      同一种主聚合物（same main polymer）的 wetted surface % 相加后，按 ≥10% / 1%–10% / &lt;1% 确定 Product Group (B/C/D)，再查 CF → RG。
+    </div>
+    <div class="summary-grid">
+      <div>
+        <table class="summary" id="summaryTable">
+          <thead>
+            <tr>
+              <th>Material 材料组</th>
+              <th style="text-align:right">% Wetted Surface</th>
+              <th>Product Group</th>
+              <th>CF (d/dm)</th>
+              <th>Risk Group</th>
+            </tr>
+          </thead>
+          <tbody id="summaryBody">
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:2rem">请在 BOM 表中填写有机材料数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="quote-box" id="quoteBox">
+        <h3>📋 报价参考 — RG 分布</h3>
+        <div id="rgChart" style="margin-bottom:.75rem"></div>
+        <div id="quoteContent">
+          <p style="font-size:.85rem;color:var(--muted)">填写 BOM 后自动生成各 RG 材料组数量，便于报价分级。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Optimization Analysis -->
+  <div class="cf-ref" style="margin-top:1rem;padding:1rem">
+    <div style="font-weight:600;color:var(--accent);margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem;cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none'">
+      🔧 设计优化分析 <span style="font-size:.72rem;color:var(--muted);font-weight:400">点击展开/收起 — 看看如何通过减少过水面积降低 RG</span>
+    </div>
+    <div id="optimizationContent" style="font-size:.85rem;line-height:1.7"></div>
+  </div>
+
+  <!-- CF Reference -->
+  <details class="cf-ref">
+    <summary>📊 CF 转换因子对照表（CID EU 2024/368 Table 5 — 完整版）</summary>
+    <div id="cfRefContent" style="margin-top:.75rem;font-size:.75rem;overflow-x:auto"></div>
+  </details>
+</main>
+
+<script>
+/* ── CF / Product Group / RG 数据（CID EU 2024/368 Table 1） ── */
+const CF_DATA = {
+  A: { label: 'A · Pipes and pipe linings', cfs: [20, 10, 5], rgs: ['RG1','RG1','RG1'],
+       subs: ['ID < 80 mm (domestic)','80 ≤ ID < 300 mm (service)','ID ≥ 300 mm (mains)'] },
+  B: { label: 'B · Fittings, ancillaries', cfs: [2, 1, 0.5], rgs: ['RG2','RG2','RG2'],
+       subs: ['ID < 80 mm','80–300 mm','≥ 300 mm'], threshold: '≥ 10%' },
+  C: { label: 'C · Components of fittings', cfs: [0.2, 0.1, 0.05], rgs: ['RG3','RG3','RG3'],
+       subs: ['ID < 80 mm','80–300 mm','≥ 300 mm'], threshold: '1% – < 10%' },
+  D: { label: 'D · Small Components', cfs: [0.02, 0.01, 0.005], rgs: ['RG4','RG4','RG4'],
+       subs: ['ID < 80 mm','80–300 mm','≥ 300 mm'], threshold: '< 1%' },
+  E: { label: 'E · Storage systems', cfs: [4, 2, 1], rgs: ['RG1','RG1','RG2'],
+       subs: ['Domestic < 10 L','Domestic ≥ 10 L','Water supply'], threshold: '≥ 10%' },
+  F: { label: 'F · Components of storage', cfs: [0.4, 0.2, 0.1], rgs: ['RG2','RG3','RG3'],
+       subs: ['Domestic < 10 L','Domestic ≥ 10 L','Water supply'], threshold: '1% – < 10%' },
+  G: { label: 'G · Small Components storage', cfs: [0.04, 0.02, 0.01], rgs: ['RG3','RG4','RG4'],
+       subs: ['Domestic < 10 L','Domestic ≥ 10 L','Water supply'], threshold: '< 1%' },
+};
+
+const MAT_COLORS = {};
+const PALETTE = ['#fff59d','#ffcc80','#90caf9','#a5d6a7','#ce93d8','#80deea','#ffab91','#bcaaa4'];
+
+const MATERIAL_TYPES = [
+  { v: 'organic', l: '有机' },
+  { v: 'metal', l: '金属' },
+  { v: 'ceramic', l: '陶瓷' },
+  { v: 'cement', l: '水泥' },
+  { v: 'other', l: '其它' },
+];
+
+/* ── 材料类型智能映射字典 ── */
+const MATERIAL_MAP = {
+  // 有机材料
+  'epdm': 'organic', 'nbr': 'organic', '丁腈橡胶': 'organic', '硅橡胶': 'organic', 'silicone': 'organic',
+  'pom': 'organic', '聚甲醛': 'organic', 'pp': 'organic', 'pe': 'organic', 'pa': 'organic', '聚酰胺': 'organic',
+  'nylon': 'organic', 'ptfe': 'organic', '聚四氟乙烯': 'organic', 'pps': 'organic', '聚苯硫醚': 'organic',
+  'pvc': 'organic', 'abs': 'organic', 'pc': 'organic', 'psu': 'organic', 'peek': 'organic',
+  '橡胶': 'organic', '塑料': 'organic', ' elastomer': 'organic', '密封圈': 'organic',
+  // 金属材料
+  '黄铜': 'metal', '铜': 'metal', 'cw617n': 'metal', 'cw614n': 'metal', 'cuzn': 'metal',
+  '不锈钢': 'metal', 'sus304': 'metal', 'sus316': 'metal', '304': 'metal', '316': 'metal',
+  '锌合金': 'metal', '铝合金': 'metal', '铸铁': 'metal', '钢': 'metal', '铁': 'metal',
+  'brass': 'metal', 'copper': 'metal', 'stainless': 'metal', 'steel': 'metal', 'zinc': 'metal',
+  // 陶瓷材料
+  '陶瓷': 'ceramic', '氧化铝': 'ceramic', '氧化锆': 'ceramic', 'ceramic': 'ceramic', 'alumina': 'ceramic',
+  // 水泥材料
+  '水泥': 'cement', '混凝土': 'cement', 'cement': 'cement',
+};
+
+function guessMaterialType(name) {
+  if (!name) return 'other';
+  const lower = name.toLowerCase();
+  for (const [key, type] of Object.entries(MATERIAL_MAP)) {
+    if (lower.includes(key)) return type;
+  }
+  return 'other';
+}
+
+let rowId = 0;
+let colorIdx = 0;
+let ocrResults = [];
+
+function getAppLevel() {
+  const pt = document.getElementById('productType').value;
+  if (pt === 'storage') return +document.getElementById('storageApp').value;
+  return +document.getElementById('application').value;
+}
+
+function getGroupLetters() {
+  const pt = document.getElementById('productType').value;
+  if (pt === 'fitting') return ['B','C','D'];
+  if (pt === 'storage') return ['E','F','G'];
+  return ['A'];
+}
+
+function pctToGroup(pct) {
+  const letters = getGroupLetters();
+  if (letters.length === 1) return 'A';
+  if (pct >= 10) return letters[0];
+  if (pct >= 1) return letters[1];
+  return letters[2];
+}
+
+function lookupCF(pct) {
+  const lvl = getAppLevel();
+  const g = pctToGroup(pct);
+  const d = CF_DATA[g];
+  return { group: g + (lvl + 1), groupLetter: g, cf: d.cfs[lvl], rg: d.rgs[lvl], level: lvl };
+}
+
+function rgBadge(rg) {
+  const cls = rg ? 'rg-' + rg : 'rg-—';
+  return `<span class="rg-badge ${cls}">${rg || '—'}</span>`;
+}
+
+function matColor(name) {
+  if (!name) return '#f5f5f5';
+  if (!MAT_COLORS[name]) {
+    MAT_COLORS[name] = PALETTE[colorIdx % PALETTE.length];
+    colorIdx++;
+  }
+  return MAT_COLORS[name];
+}
+
+function matChip(name) {
+  if (!name) return '—';
+  const c = matColor(name);
+  return `<span class="mat-chip" style="background:${c}">${name}</span>`;
+}
+
+function onProductTypeChange() {
+  const pt = document.getElementById('productType').value;
+  document.getElementById('applicationField').style.display = pt === 'fitting' || pt === 'pipe' ? '' : 'none';
+  document.getElementById('storageField').style.display = pt === 'storage' ? '' : 'none';
+}
+
+function previewImg(input, dropId) {
+  const drop = document.getElementById(dropId);
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    drop.innerHTML = `<img src="${e.target.result}" alt="upload">`;
+    drop.appendChild(input);
+  };
+  reader.readAsDataURL(file);
+}
+
+function addRow(count = 1) {
+  const tbody = document.getElementById('bomBody');
+  for (let i = 0; i < count; i++) {
+    rowId++;
+    const tr = document.createElement('tr');
+    tr.dataset.id = rowId;
+    tr.innerHTML = `
+      <td><input type="number" class="part-no" value="${rowId}" min="1" style="width:42px" oninput="recalc()"></td>
+      <td><input type="text" class="part-name" placeholder="零件名" oninput="recalc()"></td>
+      <td><input type="number" class="part-qty" value="1" min="1" step="1" oninput="recalc()"></td>
+      <td><input type="text" class="part-mat" placeholder="Plastics 1" oninput="recalc()"></td>
+      <td>
+        <select class="part-type" onchange="recalc()">
+          ${MATERIAL_TYPES.map(t => `<option value="${t.v}">${t.l}</option>`).join('')}
+        </select>
+      </td>
+      <td><input type="number" class="part-area" placeholder="cm²" step="0.01" min="0" oninput="recalc()"></td>
+      <td><input type="number" class="part-pct" placeholder="%" step="0.01" min="0" max="100" oninput="onPctInput(this)"></td>
+      <td class="rg-single">—</td>
+      <td class="rg-sum">—</td>
+      <td><button class="btn btn-danger btn-sm" onclick="removeRow(this)" title="删除">✕</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+  recalc();
+}
+
+function removeRow(btn) {
+  btn.closest('tr').remove();
+  recalc();
+}
+
+function onPctInput(el) {
+  const tr = el.closest('tr');
+  const totalArea = parseFloat(document.getElementById('totalArea').value);
+  const pct = parseFloat(el.value);
+  if (totalArea > 0 && !isNaN(pct)) {
+    tr.querySelector('.part-area').value = (totalArea * pct / 100).toFixed(2);
+  }
+  recalc();
+}
+
+function getRows() {
+  return [...document.querySelectorAll('#bomBody tr')].map(tr => {
+    const qty = parseFloat(tr.querySelector('.part-qty').value) || 1;
+    const area = parseFloat(tr.querySelector('.part-area').value) || 0;
+    const pctDirect = parseFloat(tr.querySelector('.part-pct').value);
+    return {
+      tr,
+      no: tr.querySelector('.part-no').value,
+      name: tr.querySelector('.part-name').value,
+      qty,
+      mat: tr.querySelector('.part-mat').value.trim(),
+      type: tr.querySelector('.part-type').value,
+      area: area * qty,
+      pctDirect: isNaN(pctDirect) ? null : pctDirect,
+    };
+  });
+}
+
+function recalc() {
+  const rows = getRows();
+  let totalAreaInput = parseFloat(document.getElementById('totalArea').value);
+  let sumArea = rows.reduce((s, r) => s + r.area, 0);
+
+  if (!totalAreaInput && sumArea > 0) {
+    totalAreaInput = sumArea;
+  }
+
+  rows.forEach(r => {
+    if (r.pctDirect !== null) {
+      r.pct = r.pctDirect;
+    } else if (totalAreaInput > 0 && r.area > 0) {
+      r.pct = r.area / totalAreaInput * 100;
+      r.tr.querySelector('.part-pct').value = r.pct.toFixed(2);
+    } else {
+      r.pct = 0;
+    }
+  });
+
+  const sumPct = rows.reduce((s, r) => s + r.pct, 0);
+
+  const groups = {};
+  rows.forEach(r => {
+    if (r.type !== 'organic' || !r.mat) return;
+    if (!groups[r.mat]) groups[r.mat] = { mat: r.mat, pct: 0, parts: [] };
+    groups[r.mat].pct += r.pct;
+    groups[r.mat].parts.push(r);
+  });
+
+  rows.forEach(r => {
+    const singleCell = r.tr.querySelector('.rg-single');
+    const sumCell = r.tr.querySelector('.rg-sum');
+    r.tr.style.background = '';
+    if (r.type !== 'organic') {
+      singleCell.innerHTML = '—';
+      sumCell.innerHTML = '—';
+      return;
+    }
+    const single = lookupCF(r.pct);
+    singleCell.innerHTML = rgBadge(single.rg);
+    if (r.mat && groups[r.mat]) {
+      const summed = lookupCF(groups[r.mat].pct);
+      sumCell.innerHTML = rgBadge(summed.rg);
+      if (single.rg !== summed.rg) {
+        r.tr.style.background = '#fff3e0';
+      }
+    } else {
+      sumCell.innerHTML = rgBadge(single.rg);
+    }
+  });
+
+  document.getElementById('totalAreaCell').textContent = sumArea > 0 ? sumArea.toFixed(2) : '—';
+  const pctCell = document.getElementById('totalPctCell');
+  pctCell.textContent = sumPct > 0 ? sumPct.toFixed(1) + '%' : '—';
+  pctCell.className = Math.abs(sumPct - 100) < 0.5 ? 'total-ok' : (sumPct > 0 ? 'total-warn' : '');
+
+  const summaryBody = document.getElementById('summaryBody');
+  const groupList = Object.values(groups).sort((a, b) => b.pct - a.pct);
+
+  if (groupList.length === 0) {
+    summaryBody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:2rem">请在 BOM 表中填写有机材料（类型=有机）及 MATERIAL 组名</td></tr>';
+  } else {
+    summaryBody.innerHTML = groupList.map(g => {
+      const info = lookupCF(g.pct);
+      const upgraded = g.parts.some(p => lookupCF(p.pct).rg !== info.rg);
+      const note = upgraded ? ' ⬆' : '';
+      return `<tr>
+        <td>${matChip(g.mat)}${note}</td>
+        <td class="pct">${g.pct.toFixed(1)}%</td>
+        <td>${info.group}</td>
+        <td class="cf">${info.cf} d/dm</td>
+        <td>${rgBadge(info.rg)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const rgCount = { RG1: 0, RG2: 0, RG3: 0, RG4: 0 };
+  groupList.forEach(g => {
+    const rg = lookupCF(g.pct).rg;
+    rgCount[rg]++;
+  });
+  const quoteEl = document.getElementById('quoteContent');
+  const rgLabels = {
+    RG1: '最高风险 — 测试/认证成本最高',
+    RG2: '较高风险 — Module B+D',
+    RG3: '中等风险 — 内部生产控制',
+    RG4: '较低风险 — 测试要求最轻',
+  };
+  let html = '';
+  ['RG1','RG2','RG3','RG4'].forEach(rg => {
+    if (rgCount[rg] > 0) {
+      html += `<div class="quote-item"><span>${rgBadge(rg)} ${rgLabels[rg]}</span><span>${rgCount[rg]} 组材料</span></div>`;
+    }
+  });
+  if (!html) html = '<p style="font-size:.85rem;color:var(--muted)">暂无有机材料 RG 数据</p>';
+  html += `<div class="quote-item"><span>有机材料组合计</span><span>${groupList.length} 组</span></div>`;
+  quoteEl.innerHTML = html;
+
+  const chartEl = document.getElementById('rgChart');
+  const barColors = { RG1: '#b71c1c', RG2: '#e65100', RG3: '#f9a825', RG4: '#2e7d32' };
+  const maxCount = Math.max(1, ...Object.values(rgCount));
+  chartEl.innerHTML = ['RG1','RG2','RG3','RG4'].map(rg => {
+    const n = rgCount[rg];
+    const w = (n / maxCount * 100).toFixed(0);
+    return `<div class="rg-bar-row">
+      <span class="rg-bar-label">${rg}</span>
+      <div class="rg-bar-track"><div class="rg-bar-fill" style="width:${n ? w : 0}%;background:${barColors[rg]}"></div></div>
+      <span class="rg-bar-count">${n} 组</span>
+    </div>`;
+  }).join('');
+
+  const pt = document.getElementById('productType').value;
+  const lvl = getAppLevel();
+  const letters = getGroupLetters();
+  let note = 'Summation Rule：同种主聚合物 wetted surface % 相加 → ';
+  if (letters.length > 1) {
+    note += `≥10%→${letters[0]} · 1%–10%→${letters[1]} · <1%→${letters[2]} · `;
+    note += `当前场景 CF：${letters[0]}=${CF_DATA[letters[0]].cfs[lvl]}, ${letters[1]}=${CF_DATA[letters[1]].cfs[lvl]}, ${letters[2]}=${CF_DATA[letters[2]].cfs[lvl]} d/dm`;
+  } else {
+    note += `独立管道产品直接使用 Group A，CF=${CF_DATA.A.cfs[lvl]} d/dm → ${CF_DATA.A.rgs[lvl]}`;
+  }
+  document.getElementById('summationNote').textContent = note;
+  showOptimization();
+  buildCFRefTable();
+}
+
+/* ── 设计优化分析：降低 RG 需要减少多少过水面积 ── */
+function showOptimization() {
+  const rows = getRows();
+  let totalAreaInput = parseFloat(document.getElementById('totalArea').value);
+  let sumArea = rows.reduce((s, r) => s + r.area, 0);
+  if (!totalAreaInput && sumArea > 0) totalAreaInput = sumArea;
+
+  rows.forEach(r => {
+    if (r.pctDirect !== null) {
+      r.pct = r.pctDirect;
+    } else if (totalAreaInput > 0 && r.area > 0) {
+      r.pct = r.area / totalAreaInput * 100;
+    } else {
+      r.pct = 0;
+    }
+  });
+
+  const effectiveTotal = totalAreaInput || sumArea || 100;
+  const groups = {};
+  rows.forEach(r => {
+    if (r.type !== 'organic' || !r.mat) return;
+    if (!groups[r.mat]) groups[r.mat] = { mat: r.mat, pct: 0, parts: [] };
+    groups[r.mat].pct += r.pct;
+    groups[r.mat].parts.push(r);
+  });
+  const groupList = Object.values(groups).sort((a, b) => b.pct - a.pct);
+  const el = document.getElementById('optimizationContent');
+  const letters = getGroupLetters();
+  const isSinglePipe = letters.length === 1;
+
+  if (groupList.length === 0) {
+    el.innerHTML = '<p style="color:var(--muted);padding:.5rem 0">暂无有机材料数据，填写 BOM 后自动显示优化分析。</p>';
+    return;
+  }
+
+  let hasOptimizable = false;
+  let html = '<div style="display:flex;flex-direction:column;gap:.75rem">';
+
+  groupList.forEach(g => {
+    const current = lookupCF(g.pct);
+    let targetPct = null;
+    let targetGroup = null;
+    let tierLabel = '';
+
+    if (isSinglePipe) {
+      html += `<div style="background:#e3f2fd;border-radius:6px;padding:.75rem">
+        <strong>${matChip(g.mat)}</strong> — ${g.pct.toFixed(1)}% · ${current.group} · ${rgBadge(current.rg)}
+        <br><span style="font-size:.82rem;color:var(--muted)">管道为独立产品组 A，RG 由管径直接确定，不适用组件面积优化。</span>
+      </div>`;
+      return;
+    }
+
+    if (g.pct >= 10) {
+      targetPct = 9.9;
+      targetGroup = letters[1];
+      tierLabel = '≥10% → <10%';
+    } else if (g.pct >= 1) {
+      targetPct = 0.99;
+      targetGroup = letters[2];
+      tierLabel = '≥1% → <1%';
+    }
+
+    if (targetPct === null) {
+      html += `<div style="background:#f1f8e9;border-radius:6px;padding:.75rem">
+        <strong>${matChip(g.mat)}</strong> — 当前 <strong>${g.pct.toFixed(1)}%</strong> · ${current.group} · ${rgBadge(current.rg)}
+        <br><span style="color:var(--rg4);font-size:.82rem">✓ 已是该产品类型下可达到的最低风险等级。</span>
+      </div>`;
+      return;
+    }
+
+    hasOptimizable = true;
+    const nextInfo = lookupCF(targetPct);
+    const reductionPct = g.pct - targetPct;
+    const reductionRatio = (reductionPct / g.pct * 100).toFixed(1);
+
+    html += `<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:.85rem">
+      <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem">
+        <strong>${matChip(g.mat)}</strong>
+        <span class="rg-badge ${'rg-'+current.rg}" style="font-size:.7rem">${current.rg}</span>
+        <span style="font-size:.82rem;color:var(--muted)">→</span>
+        <span class="rg-badge ${'rg-'+nextInfo.rg}" style="font-size:.7rem">${nextInfo.rg}</span>
+        <span style="font-size:.82rem;color:var(--muted)">产品组 ${current.group} → ${targetGroup}</span>
+      </div>
+      <div style="font-size:.85rem;line-height:1.8">
+        🎯 需要将总过水面积从 <strong>${g.pct.toFixed(1)}%</strong> 降至 <strong>${targetPct.toFixed(0)}% 以下</strong>（${tierLabel}）
+        <br>📉 需减少 <strong style="color:#e65100">${reductionPct.toFixed(1)} 个百分点</strong>（当前总和的 ${reductionRatio}%）`;
+    
+    if (g.parts.length > 0) {
+      html += `<table style="margin-top:.5rem;width:100%;border-collapse:collapse;font-size:.75rem">
+        <tr><th style="text-align:left;padding:.3rem .4rem;border-bottom:1px solid #ddd">零件</th>
+        <th style="padding:.3rem .4rem;border-bottom:1px solid #ddd;text-align:right">当前 cm²</th>
+        <th style="padding:.3rem .4rem;border-bottom:1px solid #ddd;text-align:right">当前 %</th>
+        <th style="padding:.3rem .4rem;border-bottom:1px solid #ddd;text-align:right">目标 cm² ≤</th>
+        <th style="padding:.3rem .4rem;border-bottom:1px solid #ddd;text-align:right">需减 cm²</th></tr>`;
+      
+      g.parts.forEach(p => {
+        const partPct = p.pct;
+        const currArea = effectiveTotal * partPct / 100;
+        const targetPartPct = targetPct * (partPct / g.pct);
+        const targetArea = effectiveTotal * targetPartPct / 100;
+        
+        html += `<tr>
+          <td style="padding:.25rem .4rem;border-bottom:1px solid #eee">${p.name || '零件'}</td>
+          <td style="padding:.25rem .4rem;border-bottom:1px solid #eee;text-align:right">${currArea.toFixed(1)}</td>
+          <td style="padding:.25rem .4rem;border-bottom:1px solid #eee;text-align:right">${partPct.toFixed(2)}%</td>
+          <td style="padding:.25rem .4rem;border-bottom:1px solid #eee;text-align:right;color:#2e7d32">${targetArea.toFixed(1)}</td>
+          <td style="padding:.25rem .4rem;border-bottom:1px solid #eee;text-align:right;color:#e65100">${(currArea-targetArea).toFixed(1)}</td>
+        </tr>`;
+      });
+      
+      html += `</table>`;
+
+      let tip = '';
+      const matLower = g.mat.toLowerCase();
+      if (matLower.includes('epdm') || matLower.includes('nbr') || matLower.includes('橡胶') || matLower.includes('seal')) {
+        tip = '减小密封件截面宽度（如从 φ3 → φ2），或改用 O 型圈代替平面垫片。';
+      } else if (matLower.includes('pom') || matLower.includes('聚甲醛') || matLower.includes('pp') || matLower.includes('pe')) {
+        tip = '缩小结构件壁厚或减短过水通道长度。';
+      } else if (matLower.includes('pa') || matLower.includes('聚酰胺') || matLower.includes('nylon')) {
+        tip = '减少过水孔数量或缩小孔径。';
+      } else {
+        tip = '缩小该零件的过水接触面积。';
+      }
+      html += `<div style="margin-top:.5rem;padding:.4rem .6rem;background:#e3f2fd;border-radius:4px;font-size:.78rem">
+        💡 设计建议：${tip}
+      </div>`;
+    }
+    
+    html += `</div>`;
+  });
+
+  html += '</div>';
+
+  if (!hasOptimizable) {
+    el.innerHTML = html;
+    return;
+  }
+
+  html += `<div style="margin-top:.75rem;padding:.6rem .75rem;background:#fff3e0;border-radius:6px;font-size:.8rem">
+    ⚡ 提示：改动上述零件的过水面积后，在 BOM 表中更新面积数值，本分析将自动重新计算。
+    多个有机材料组同时优化后，可整体降低认证成本（从 System 1+ 降至 Module B+C）。
+  </div>`;
+
+  el.innerHTML = html;
+}
+
+function buildCFRefTable() {
+  const lvl = getAppLevel();
+  const pt = document.getElementById('productType').value;
+
+  const ALL_GROUPS = [
+    { letter: 'A', label: 'A · Pipes / pipe linings', foot: '',
+      rows: [
+        { sub: 'ID < 80 mm (domestic)', cf: 20, threshold: '', rg: 'RG1', apply: pt==='pipe' },
+        { sub: '80 ≤ ID < 300 mm (service)', cf: 10, threshold: '', rg: 'RG1', apply: pt==='pipe' },
+        { sub: 'ID ≥ 300 mm (mains)', cf: 5, threshold: '', rg: 'RG1', apply: pt==='pipe' },
+      ]},
+    { letter: 'B', label: 'B · Fittings, ancillaries ¹⁰', foot: '⁰ Sum of same main polymer ≥ 10 % → B',
+      rows: [
+        { sub: 'ID < 80 mm (domestic)', cf: 2, threshold: '≥ 10 %', rg: 'RG2', apply: pt==='fitting' },
+        { sub: '80 ≤ ID < 300 mm (service)', cf: 1, threshold: '≥ 10 %', rg: 'RG2', apply: pt==='fitting' },
+        { sub: 'ID ≥ 300 mm (mains)', cf: 0.5, threshold: '≥ 10 %', rg: 'RG2', apply: pt==='fitting' },
+      ]},
+    { letter: 'C', label: 'C · Components of fittings ¹¹', foot: '¹ Sum of same main polymer < 10 % → C',
+      rows: [
+        { sub: 'ID < 80 mm (domestic)', cf: 0.2, threshold: '1 % – < 10 %', rg: 'RG3', apply: pt==='fitting' },
+        { sub: '80 ≤ ID < 300 mm (service)', cf: 0.1, threshold: '1 % – < 10 %', rg: 'RG3', apply: pt==='fitting' },
+        { sub: 'ID ≥ 300 mm (mains)', cf: 0.05, threshold: '1 % – < 10 %', rg: 'RG3', apply: pt==='fitting' },
+      ]},
+    { letter: 'D', label: 'D · Small components of fittings ¹²', foot: '² Sum of same main polymer < 1 % → D',
+      rows: [
+        { sub: 'ID < 80 mm (domestic)', cf: 0.02, threshold: '< 1 %', rg: 'RG4', apply: pt==='fitting' },
+        { sub: '80 ≤ ID < 300 mm (service)', cf: 0.01, threshold: '< 1 %', rg: 'RG4', apply: pt==='fitting' },
+        { sub: 'ID ≥ 300 mm (mains)', cf: 0.005, threshold: '< 1 %', rg: 'RG4', apply: pt==='fitting' },
+      ]},
+    { letter: 'E', label: 'E · Storage systems / reservoirs ¹⁰', foot: '⁰ Sum of same main polymer ≥ 10 % → E',
+      rows: [
+        { sub: 'Domestic < 10 L', cf: 4, threshold: '≥ 10 %', rg: 'RG1', apply: pt==='storage' },
+        { sub: 'Domestic ≥ 10 L', cf: 2, threshold: '≥ 10 %', rg: 'RG1', apply: pt==='storage' },
+        { sub: 'Water supply', cf: 1, threshold: '≥ 10 %', rg: 'RG2', apply: pt==='storage' },
+      ]},
+    { letter: 'F', label: 'F · Components of storage ¹¹', foot: '¹ Sum of same main polymer < 10 % → F',
+      rows: [
+        { sub: 'Domestic < 10 L', cf: 0.4, threshold: '1 % – < 10 %', rg: 'RG2', apply: pt==='storage' },
+        { sub: 'Domestic ≥ 10 L', cf: 0.2, threshold: '1 % – < 10 %', rg: 'RG3', apply: pt==='storage' },
+        { sub: 'Water supply', cf: 0.1, threshold: '1 % – < 10 %', rg: 'RG3', apply: pt==='storage' },
+      ]},
+    { letter: 'G', label: 'G · Small components of storage ¹²', foot: '² Sum of same main polymer < 1 % → G',
+      rows: [
+        { sub: 'Domestic < 10 L', cf: 0.04, threshold: '< 1 %', rg: 'RG3', apply: pt==='storage' },
+        { sub: 'Domestic ≥ 10 L', cf: 0.02, threshold: '< 1 %', rg: 'RG4', apply: pt==='storage' },
+        { sub: 'Water supply', cf: 0.01, threshold: '< 1 %', rg: 'RG4', apply: pt==='storage' },
+      ]},
+  ];
+
+  const rows = getRows();
+  let totalAreaInput = parseFloat(document.getElementById('totalArea').value);
+  let sumArea = rows.reduce((s, r) => s + r.area, 0);
+  if (!totalAreaInput && sumArea > 0) totalAreaInput = sumArea;
+  rows.forEach(r => {
+    if (r.pctDirect !== null) r.pct = r.pctDirect;
+    else if (totalAreaInput > 0 && r.area > 0) r.pct = r.area / totalAreaInput * 100;
+    else r.pct = 0;
+  });
+  const groups = {};
+  rows.forEach(r => {
+    if (r.type !== 'organic' || !r.mat) return;
+    if (!groups[r.mat]) groups[r.mat] = { mat: r.mat, pct: 0, parts: [] };
+    groups[r.mat].pct += r.pct;
+    groups[r.mat].parts.push(r);
+  });
+  const activeRgs = new Set();
+  Object.values(groups).forEach(g => {
+    const info = lookupCF(g.pct);
+    activeRgs.add(info.rg);
+  });
+
+  const RG_STEPS = [
+    { min: 4,  rg: 'RG1', color: '#b71c1c', label: 'CF ≥ 4' },
+    { min: 0.4, rg: 'RG2', color: '#e65100', label: '0.4 ≤ CF < 4' },
+    { min: 0.04, rg: 'RG3', color: '#f9a825', label: '0.04 ≤ CF < 0.4' },
+    { min: 0, rg: 'RG4', color: '#2e7d32', label: 'CF < 0.04' },
+  ];
+
+  let html = '';
+
+  html += '<div style="margin-bottom:.75rem;display:flex;gap:.35rem;flex-wrap:wrap">';
+  RG_STEPS.forEach(s => {
+    const isActive = activeRgs.has(s.rg);
+    const border = isActive ? '3px solid #1565c0' : '3px solid transparent';
+    html += `<span style="display:inline-block;background:${s.color};color:#fff;padding:.2rem .6rem;border-radius:3px;font-weight:600;font-size:.7rem;border:${border}">${s.rg} ${s.label}${isActive ? ' ★' : ''}</span>`;
+  });
+  html += '</div>';
+
+  html += '<table style="width:100%;border-collapse:collapse;font-size:.75rem">';
+  html += '<tr><th style="border:1px solid var(--border);padding:.3rem .4rem;background:#eceff1;text-align:left">产品组</th><th style="border:1px solid var(--border);padding:.3rem .4rem;background:#eceff1;text-align:left">子类别</th><th style="border:1px solid var(--border);padding:.3rem .4rem;background:#eceff1;text-align:center">CF (d/dm)</th><th style="border:1px solid var(--border);padding:.3rem .4rem;background:#eceff1;text-align:center">RG</th><th style="border:1px solid var(--border);padding:.3rem .4rem;background:#eceff1;text-align:center">阈值¹⁰⁻¹²</th></tr>';
+
+  ALL_GROUPS.forEach(g => {
+    g.rows.forEach((r, idx) => {
+      const isActive = r.apply;
+      const isCurrentRg = activeRgs.has(r.rg);
+      const highlighted = isActive && isCurrentRg;
+      const bg = highlighted ? '#e3f2fd' : (isActive ? '#f8f9fa' : '#fff');
+      const arrow = isActive && isCurrentRg ? '▶ ' : '';
+      html += `<tr style="background:${bg}">
+        <td style="border:1px solid var(--border);padding:.25rem .4rem;font-weight:${idx===0?700:400}">${idx===0 ? g.label : ''}</td>
+        <td style="border:1px solid var(--border);padding:.25rem .4rem">${arrow}${r.sub}${idx===0 && g.foot ? '<br><span style="font-size:.65rem;color:#1565c0">'+g.foot+'</span>' : ''}</td>
+        <td style="border:1px solid var(--border);padding:.25rem .4rem;text-align:center;font-weight:700">${r.cf}</td>
+        <td style="border:1px solid var(--border);padding:.25rem .4rem;text-align:center">${rgBadge(r.rg)}</td>
+        <td style="border:1px solid var(--border);padding:.25rem .4rem;text-align:center;font-size:.7rem">${r.threshold}</td>
+      </tr>`;
+    });
+  });
+
+  html += '</table>';
+
+  html += '<div style="margin-top:.5rem;font-size:.65rem;color:var(--muted);line-height:1.6">';
+  html += '<b>脚注（CID EU 2024/368 Annex I, Table 5）：</b><br>';
+  html += '¹⁰ 同主聚合物组件的 wetted surface 占比 ≥ 10 % 时 → 产品组 B 或 E<br>';
+  html += '¹¹ 同主聚合物组件的 wetted surface 占比 < 10 % 时 → 产品组 C 或 F<br>';
+  html += '¹² 同主聚合物组件的 wetted surface 占比 < 1 % 时 → 产品组 D 或 G<br>';
+  html += '¹ 管道产品族（product family）：同一预产品、同一工艺制造的管道系列，最小直径通过后全族适用。<br>';
+  html += '📌 当前产品类型：<b>'+document.getElementById('productType').selectedOptions[0].text+'</b>，蓝色高亮行 = 当前BOM中实际出现的RG等级。';
+  html += '</div>';
+
+  document.getElementById('cfRefContent').innerHTML = html;
+}
+
+/* ── OCR 爆炸图识别 ── */
+
+// Drag & drop for OCR
+const ocrDrop = document.getElementById('ocrDrop');
+if (ocrDrop) {
+  ocrDrop.addEventListener('dragover', e => { e.preventDefault(); ocrDrop.classList.add('dragover'); });
+  ocrDrop.addEventListener('dragleave', () => ocrDrop.classList.remove('dragover'));
+  ocrDrop.addEventListener('drop', e => {
+    e.preventDefault();
+    ocrDrop.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) processOCRFile(file);
+  });
+}
+
+function handleOCRUpload(input) {
+  const file = input.files[0];
+  if (file) processOCRFile(file);
+}
+
+async function processOCRFile(file) {
+  const progressEl = document.getElementById('ocrProgress');
+  const resultPanel = document.getElementById('ocrResultPanel');
+  const resultBody = document.getElementById('ocrResultBody');
+  
+  progressEl.textContent = '⏳ 正在识别，请稍候...';
+  resultPanel.style.display = 'none';
+  ocrResults = [];
+
+  try {
+    let imageUrl;
+    if (file.type === 'application/pdf') {
+      // For PDF, we'd need a PDF renderer. For now, show message.
+      progressEl.textContent = '⚠️ PDF 识别需要额外处理，请先将 PDF 转为图片上传，或使用下方预置案例。';
+      return;
+    } else {
+      imageUrl = URL.createObjectURL(file);
+    }
+
+    const result = await Tesseract.recognize(imageUrl, 'chi_sim+eng', {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          progressEl.textContent = `⏳ 识别中... ${(m.progress * 100).toFixed(0)}%`;
+        }
+      }
+    });
+
+    const text = result.data.text;
+    console.log('OCR Raw:', text);
+    
+    // Parse BOM table from OCR text
+    ocrResults = parseBOMFromOCR(text);
+    
+    if (ocrResults.length === 0) {
+      progressEl.textContent = '⚠️ 未能识别到 BOM 表格数据。请确保爆炸图右下角有规范的零件清单表格。';
+      return;
+    }
+
+    // Render results
+    renderOCRResults();
+    progressEl.textContent = `✅ 识别完成，共 ${ocrResults.length} 个零件，请检查并确认。`;
+    resultPanel.style.display = '';
+
+  } catch (err) {
+    console.error(err);
+    progressEl.textContent = '❌ 识别失败：' + err.message;
+  }
+}
+
+function parseBOMFromOCR(text) {
+  const results = [];
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+  
+  // Try to find table rows with pattern: number | code | name | material | weight | qty | area | pct
+  // Look for lines that start with a number and have material-like content
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Pattern 1: "1 P09Z0749 把手 锌合金 29.86 1"
+    // Pattern 2: "6 P01B1141 G1/2本体 CW617N 85.40 1 3182.06 78.90%"
+    const match = line.match(/^(\d+)\s+([A-Z0-9]+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5]+)\s+([\d.]+)\s+(\d+)(?:\s+([\d.]+)\s+([\d.]+%?))?/);
+    
+    if (match) {
+      const [, no, code, name, material, weight, qty, area, pct] = match;
+      const matType = guessMaterialType(material);
+      const areaCm2 = area ? (parseFloat(area) / 100).toFixed(2) : '';
+      const pctVal = pct ? parseFloat(pct.replace('%', '')) : 0;
+      
+      results.push({
+        no: parseInt(no),
+        code: code.trim(),
+        name: name.trim(),
+        material: material.trim(),
+        qty: parseInt(qty),
+        area: areaCm2,
+        pct: pctVal,
+        type: matType,
+        conf: 'high'
+      });
+    }
+  }
+  
+  // If no structured match, try simpler pattern
+  if (results.length === 0) {
+    for (const line of lines) {
+      // Try: "5 密封垫片 EPDM 0.32 1 197.89 4.91%"
+      const simpleMatch = line.match(/^(\d+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5]+)\s+([\d.]+)\s+(\d+)(?:\s+([\d.]+)\s+([\d.]+%?))?/);
+      if (simpleMatch) {
+        const [, no, name, material, weight, qty, area, pct] = simpleMatch;
+        const matType = guessMaterialType(material);
+        const areaCm2 = area ? (parseFloat(area) / 100).toFixed(2) : '';
+        const pctVal = pct ? parseFloat(pct.replace('%', '')) : 0;
+        
+        results.push({
+          no: parseInt(no),
+          code: '',
+          name: name.trim(),
+          material: material.trim(),
+          qty: parseInt(qty),
+          area: areaCm2,
+          pct: pctVal,
+          type: matType,
+          conf: 'med'
+        });
+      }
+    }
+  }
+  
+  return results.sort((a, b) => a.no - b.no);
+}
+
+function renderOCRResults() {
+  const body = document.getElementById('ocrResultBody');
+  
+  body.innerHTML = ocrResults.map((r, i) => {
+    const confClass = r.conf === 'high' ? 'ocr-conf-high' : (r.conf === 'med' ? 'ocr-conf-med' : 'ocr-conf-low');
+    const confText = r.conf === 'high' ? '高' : (r.conf === 'med' ? '中' : '低');
+    
+    return `
+      <div class="ocr-row" data-index="${i}">
+        <div class="ocr-num">${r.no}</div>
+        <input type="text" value="${r.name}" placeholder="零件名" onchange="updateOCR(${i},'name',this.value)">
+        <input type="number" value="${r.qty}" min="1" onchange="updateOCR(${i},'qty',this.value)">
+        <input type="text" value="${r.material}" placeholder="材料" onchange="updateOCR(${i},'material',this.value)">
+        <select onchange="updateOCR(${i},'type',this.value)">
+          ${MATERIAL_TYPES.map(t => `<option value="${t.v}" ${t.v===r.type?'selected':''}>${t.l}</option>`).join('')}
+        </select>
+        <input type="number" value="${r.area}" placeholder="cm²" step="0.01" onchange="updateOCR(${i},'area',this.value)">
+        <span class="ocr-conf ${confClass}">${confText}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function updateOCR(index, field, value) {
+  if (ocrResults[index]) {
+    ocrResults[index][field] = value;
+    if (field === 'material') {
+      ocrResults[index].type = guessMaterialType(value);
+    }
+  }
+}
+
+function clearOCR() {
+  ocrResults = [];
+  document.getElementById('ocrResultPanel').style.display = 'none';
+  document.getElementById('ocrProgress').textContent = '';
+}
+
+function applyOCRToBOM() {
+  if (ocrResults.length === 0) return;
+  
+  document.getElementById('bomBody').innerHTML = '';
+  rowId = 0;
+  colorIdx = 0;
+  Object.keys(MAT_COLORS).forEach(k => delete MAT_COLORS[k]);
+  
+  ocrResults.forEach(r => {
+    addRow();
+    const tr = document.querySelector('#bomBody tr:last-child');
+    tr.querySelector('.part-no').value = r.no;
+    tr.querySelector('.part-name').value = r.name;
+    tr.querySelector('.part-qty').value = r.qty;
+    tr.querySelector('.part-mat').value = r.material;
+    tr.querySelector('.part-type').value = r.type;
+    if (r.area) tr.querySelector('.part-area').value = r.area;
+    if (r.pct) tr.querySelector('.part-pct').value = r.pct;
+  });
+  
+  recalc();
+  document.getElementById('ocrProgress').textContent = `✅ 已填充 ${ocrResults.length} 个零件到 BOM 表`;
+}
+
+/* ── BOM 锁定/解锁 ── */
+let bomLocked = false;
+function toggleBomLock() {
+  bomLocked = !bomLocked;
+  const btn = document.getElementById('bomLockBtn');
+  const tbody = document.getElementById('bomBody');
+  if (bomLocked) {
+    btn.textContent = '🔒 已锁定';
+    btn.classList.add('locked');
+    tbody.classList.add('bom-locked');
+  } else {
+    btn.textContent = '🔓 锁定数据';
+    btn.classList.remove('locked');
+    tbody.classList.remove('bom-locked');
+  }
+}
+
+function loadExample() {
+  document.getElementById('productName').value = 'Example Sanitary Tap';
+  document.getElementById('productType').value = 'fitting';
+  document.getElementById('application').value = '0';
+  onProductTypeChange();
+
+  const example = [
+    [1,'Body',1,'Metal 1','metal',0,41.0],
+    [2,'Slider',1,'Plastics 1','organic',0,0.7],
+    [3,'Seal',1,'Elastomer 1','organic',0,0.1],
+    [4,'Screen',1,'Metal 2','metal',0,1.5],
+    [5,'Control slider',1,'Ceramics 1','ceramic',0,0.5],
+    [6,'Control disc',1,'Ceramics 2','ceramic',0,1.8],
+    [7,'Gasket',1,'Elastomer 1','organic',0,0.7],
+    [8,'Bottom',1,'Plastics 2','organic',0,7.0],
+    [9,'Seal',2,'Elastomer 1','organic',0,0.0],
+    [10,'Seal',1,'Elastomer 1','organic',0,0.3],
+    [11,'Adaptor',1,'Plastics 3','organic',0,25.3],
+    [12,'Flow regulator',1,'Plastics 1','organic',0,1.6],
+    [13,'Slider',1,'Plastics 1','organic',0,1.9],
+    [14,'Seal',2,'Elastomer 1','organic',0,2.2],
+    [15,'Seal',2,'Elastomer 1','organic',0,1.0],
+    [16,'Mousseur',1,'Multicomponent','other',0,9.2],
+    [17,'Water Guide',1,'Plastics 1','organic',0,5.1],
+    [18,'Water Guide',1,'Plastics 1','organic',0,1.8],
+  ];
+
+  document.getElementById('bomBody').innerHTML = '';
+  rowId = 0;
+  colorIdx = 0;
+  Object.keys(MAT_COLORS).forEach(k => delete MAT_COLORS[k]);
+
+  example.forEach(([no, name, qty, mat, type, area, pct]) => {
+    addRow();
+    const tr = document.querySelector('#bomBody tr:last-child');
+    tr.querySelector('.part-no').value = no;
+    tr.querySelector('.part-name').value = name;
+    tr.querySelector('.part-qty').value = qty;
+    tr.querySelector('.part-mat').value = mat;
+    tr.querySelector('.part-type').value = type;
+    if (area > 0) tr.querySelector('.part-area').value = area;
+    tr.querySelector('.part-pct').value = pct;
+  });
+
+  recalc();
+}
+
+function loadKitchenFaucetExample() {
+  document.getElementById('productName').value = '单把手厨房龙头 Single-Lever Kitchen Faucet';
+  document.getElementById('productType').value = 'fitting';
+  document.getElementById('application').value = '0';
+  onProductTypeChange();
+
+  const example = [
+    [1,'Body 壳体',1,'Brass (黄铜)','metal',45.0,38.5],
+    [2,'Handle 手柄',1,'Stainless Steel (不锈钢)','metal',8.0,6.8],
+    [3,'Cartridge 阀芯',1,'Brass (黄铜)','metal',5.5,4.7],
+    [4,'Spout 出水嘴',1,'Brass (黄铜)','metal',12.0,10.3],
+    [5,'Aerator 起泡器外壳',1,'Brass (黄铜)','metal',2.5,2.1],
+    [6,'Aerator insert 起泡器芯',1,'POM (聚甲醛)','organic',0.8,0.7],
+    [7,'Handle lever 手柄杆',1,'POM (聚甲醛)','organic',3.2,2.7],
+    [8,'Cartridge seal upper 阀芯上密封',2,'EPDM','organic',0.6,1.0],
+    [9,'Cartridge seal lower 阀芯下密封',1,'EPDM','organic',0.4,0.3],
+    [10,'Spout O-ring 出水嘴O圈',2,'EPDM','organic',0.5,0.9],
+    [11,'Body O-ring 壳体O圈',1,'EPDM','organic',0.3,0.3],
+    [12,'Cartridge housing insert 阀芯座嵌件',1,'POM (聚甲醛)','organic',1.5,1.3],
+    [13,'Check valve 止回阀',1,'PPS (聚苯硫醚)','organic',0.4,0.3],
+    [14,'Check valve seal 止回阀密封',1,'Silicone (硅橡胶)','organic',0.2,0.2],
+    [15,'Supply connector 供水接头',2,'POM (聚甲醛)','organic',4.8,8.2],
+    [16,'Supply connector seal 供水接头密封',2,'EPDM','organic',0.8,1.4],
+    [17,'Swivel seal 旋转密封',2,'PTFE (聚四氟乙烯)','organic',1.2,2.1],
+    [18,'Ceramic disc 陶瓷片',2,'Ceramic (陶瓷)','ceramic',1.8,3.1],
+  ];
+
+  document.getElementById('bomBody').innerHTML = '';
+  rowId = 0;
+  colorIdx = 0;
+  Object.keys(MAT_COLORS).forEach(k => delete MAT_COLORS[k]);
+
+  example.forEach(([no, name, qty, mat, type, area, pct]) => {
+    addRow();
+    const tr = document.querySelector('#bomBody tr:last-child');
+    tr.querySelector('.part-no').value = no;
+    tr.querySelector('.part-name').value = name;
+    tr.querySelector('.part-qty').value = qty;
+    tr.querySelector('.part-mat').value = mat;
+    tr.querySelector('.part-type').value = type;
+    if (area > 0) tr.querySelector('.part-area').value = area;
+    tr.querySelector('.part-pct').value = pct;
+  });
+
+  recalc();
+}
+
+function copyQuote() {
+  const name = document.getElementById('productName').value || '产品';
+  const rows = [...document.querySelectorAll('#summaryBody tr')];
+  if (!rows.length || rows[0].cells.length < 5) {
+    alert('请先填写 BOM 数据');
+    return;
+  }
+  let text = `DWD RG 报价摘要 — ${name}\n`;
+  text += '材料组\t占比\t产品组\tCF\tRG\n';
+  rows.forEach(tr => {
+    const cells = tr.querySelectorAll('td');
+    if (cells.length >= 5) {
+      text += `${cells[0].textContent.trim()}\t${cells[1].textContent.trim()}\t${cells[2].textContent.trim()}\tCF=${cells[3].textContent.trim()}\t${cells[4].textContent.trim()}\n`;
+    }
+  });
+  text += `\n场景: ${document.getElementById('productType').selectedOptions[0].text}`;
+  navigator.clipboard.writeText(text).then(() => alert('报价摘要已复制到剪贴板')).catch(() => {
+    prompt('请手动复制：', text);
+  });
+}
+
+function setupDragDrop(dropId, inputId) {
+  const drop = document.getElementById(dropId);
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; });
+  drop.addEventListener('dragleave', () => { drop.style.borderColor = ''; });
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.style.borderColor = '';
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const input = document.getElementById(inputId);
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      previewImg(input, dropId);
+    }
+  });
+}
+
+// Init
+document.getElementById('productType').addEventListener('change', buildCFRefTable);
+document.getElementById('application').addEventListener('change', () => { recalc(); buildCFRefTable(); });
+document.getElementById('storageApp').addEventListener('change', () => { recalc(); buildCFRefTable(); });
+
+setupDragDrop('productImgDrop', 'productImgInput');
+setupDragDrop('structureImgDrop', 'structureImgInput');
+
+buildCFRefTable();
+loadExample();
+</script>
+</body>
+</html>
