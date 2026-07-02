@@ -467,6 +467,23 @@
         <span style="font-size:.75rem;color:var(--muted);margin-left:.3rem">无需上传，直接试用识别功能</span>
       </div>
     </div>
+    <!-- 百度OCR API配置 -->
+    <div id="baiduOcrConfig" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:.75rem 1rem;margin-top:.75rem;">
+      <div style="font-weight:600;font-size:.85rem;color:var(--text);margin-bottom:.4rem;">
+        🔑 百度智能云 OCR 配置（可选）
+        <span style="font-weight:normal;font-size:.75rem;color:var(--muted);">— 配置后可自动识别图片中的文字</span>
+      </div>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+        <input type="text" id="baiduApiKey" placeholder="API Key" style="flex:1;min-width:140px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveBaiduConfig()">
+        <input type="password" id="baiduSecretKey" placeholder="Secret Key" style="flex:1;min-width:140px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveBaiduConfig()">
+        <button class="btn btn-outline btn-sm" onclick="testBaiduOcr()" id="btnTestBaidu" style="font-size:.75rem;">⚡ 测试连接</button>
+      </div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:.35rem;">
+        免费额度 500次/天，超出后约 0.009元/次。
+        <a href="https://console.bce.baidu.com/ai/?_=ai/ocr/overview/index" target="_blank" style="color:var(--accent);">去百度智能云申请 →</a>
+        <span id="baiduConfigStatus" style="margin-left:.5rem;"></span>
+      </div>
+    </div>
     <div class="ocr-progress" id="ocrProgress"></div>
     <div id="ocrResultPanel" style="display:none">
       <div class="ocr-result-panel">
@@ -1260,17 +1277,58 @@ async function processOCRFile(file) {
     // 在页面上显示预览
     showOCRPreview(img);
     
-    // 从图片中提取 BOM 表格区域（右下角常见位置）
-    progressEl.textContent = '⏳ 正在分析图片中的 BOM 表格区域...';
+    // 检查是否配置了百度OCR
+    const hasBaiduKey = localStorage.getItem('baidu_api_key') && localStorage.getItem('baidu_secret_key');
     
-    // 提取图片信息，生成可编辑的 BOM 行
+    if (hasBaiduKey) {
+      // 使用百度OCR进行文字识别
+      progressEl.textContent = '⏳ 正在调用百度OCR识别文字...';
+      try {
+        const base64 = await fileToBase64FromUrl(imageUrl);
+        const wordsResult = await callBaiduOCR(base64);
+        
+        if (wordsResult.length === 0) {
+          progressEl.textContent = '⚠️ 百度OCR未识别到文字。请检查图片清晰度，或直接使用预置示例。';
+          return;
+        }
+        
+        // 将百度OCR结果拼接为文本
+        const ocrText = wordsResult.map(w => w.words).join('\n');
+        console.log('Baidu OCR result:', ocrText);
+        
+        // 解析BOM
+        ocrResults = parseBOMFromOCR(ocrText);
+        
+        if (ocrResults.length === 0) {
+          // 未能匹配到BOM格式，显示原始文本供手动参考
+          ocrResults = [{no:1, code:'', name:'', material:'', qty:1, area:'', pct:'', type:'organic', conf:'low'}];
+          renderOCRResults();
+          progressEl.textContent = '⚠️ 已识别到 ' + wordsResult.length + ' 行文字，但未匹配到标准BOM格式。识别结果：' + ocrText.substring(0, 80) + '... 请手动填写或修正。';
+          resultPanel.style.display = '';
+          return;
+        }
+        
+        renderOCRResults();
+        progressEl.textContent = '✅ 百度OCR识别完成，共 ' + ocrResults.length + ' 个零件。请检查并修正数据后点击"确认并填充到 BOM"。';
+        resultPanel.style.display = '';
+        return;
+        
+      } catch (ocrErr) {
+        console.error('Baidu OCR error:', ocrErr);
+        progressEl.textContent = '❌ 百度OCR识别失败：' + ocrErr.message + '。请检查API Key配置，或使用预置示例。';
+        return;
+      }
+    }
+    
+    // 未配置百度OCR，使用本地分析（仅检测是否有表格区域）
+    progressEl.textContent = '⏳ 正在分析图片中的 BOM 表格区域...';
     ocrResults = extractBOMFromImage(img);
     
     if (ocrResults.length === 0) {
       // 如果没有自动检测到表格，提供手动添加模式
       ocrResults = [{no:1, code:'', name:'零件名称', material:'材料', qty:1, area:'', pct:'', type:'organic', conf:'low'}];
       renderOCRResults();
-      progressEl.textContent = 'ℹ️ 未能自动识别到标准 BOM 格式。已提供手动输入模板，请根据爆炸图手动填写零件信息，然后点击"确认并填充到 BOM"。';
+      progressEl.textContent = 'ℹ️ 未配置百度OCR（可选），无法自动识别文字。已提供手动输入模板，请根据爆炸图手动填写零件信息，然后点击"确认并填充到 BOM"。';
       resultPanel.style.display = '';
       return;
     }
@@ -1403,6 +1461,117 @@ function loadOcrDemo() {
   renderOCRResults();
   progressEl.textContent = '✅ 已加载预置示例：台盆龙头 BOM（12个零件）。请检查数据后点击"确认并填充到 BOM"。';
   resultPanel.style.display = '';
+}
+
+/* ── 百度 OCR API 集成 ── */
+
+// 从 localStorage 加载配置
+(function loadBaiduConfig() {
+  const ak = localStorage.getItem('baidu_api_key');
+  const sk = localStorage.getItem('baidu_secret_key');
+  if (ak) document.getElementById('baiduApiKey').value = ak;
+  if (sk) document.getElementById('baiduSecretKey').value = sk;
+  if (ak && sk) {
+    document.getElementById('baiduConfigStatus').innerHTML = '<span style="color:#2e7d32;">✓ 已配置</span>';
+  }
+})();
+
+function saveBaiduConfig() {
+  const ak = document.getElementById('baiduApiKey').value.trim();
+  const sk = document.getElementById('baiduSecretKey').value.trim();
+  if (ak) localStorage.setItem('baidu_api_key', ak);
+  if (sk) localStorage.setItem('baidu_secret_key', sk);
+  if (ak && sk) {
+    document.getElementById('baiduConfigStatus').innerHTML = '<span style="color:#2e7d32;">✓ 已保存</span>';
+  } else {
+    document.getElementById('baiduConfigStatus').innerHTML = '';
+  }
+}
+
+async function testBaiduOcr() {
+  const btn = document.getElementById('btnTestBaidu');
+  const status = document.getElementById('baiduConfigStatus');
+  btn.disabled = true;
+  status.innerHTML = '<span style="color:var(--accent);">⏳ 测试中...</span>';
+  
+  try {
+    const token = await getBaiduAccessToken();
+    if (token) {
+      status.innerHTML = '<span style="color:#2e7d32;">✓ 连接成功，API 可用</span>';
+    } else {
+      status.innerHTML = '<span style="color:#c62828;">✗ 获取 Token 失败，请检查 Key</span>';
+    }
+  } catch (e) {
+    status.innerHTML = '<span style="color:#c62828;">✗ 连接失败：' + (e.message || '网络错误') + '</span>';
+  }
+  btn.disabled = false;
+}
+
+async function getBaiduAccessToken() {
+  const ak = localStorage.getItem('baidu_api_key');
+  const sk = localStorage.getItem('baidu_secret_key');
+  if (!ak || !sk) return null;
+  
+  const cachedToken = sessionStorage.getItem('baidu_access_token');
+  if (cachedToken) return cachedToken;
+  
+  const url = 'https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=' + encodeURIComponent(ak) + '&client_secret=' + encodeURIComponent(sk);
+  const res = await fetch(url, { method: 'POST' });
+  const data = await res.json();
+  if (data.access_token) {
+    sessionStorage.setItem('baidu_access_token', data.access_token);
+    return data.access_token;
+  }
+  console.error('Baidu token error:', data);
+  return null;
+}
+
+async function callBaiduOCR(base64Image) {
+  const token = await getBaiduAccessToken();
+  if (!token) throw new Error('未配置百度 API Key 或获取 Token 失败');
+  
+  // 通用文字识别（高精度版）
+  const url = 'https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic?access_token=' + token;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'image=' + encodeURIComponent(base64Image)
+  });
+  const data = await res.json();
+  if (data.error_code) {
+    throw new Error('百度OCR错误 ' + data.error_code + ': ' + data.error_msg);
+  }
+  return data.words_result || [];
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function fileToBase64FromUrl(imageUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const base64 = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+      resolve(base64);
+    };
+    img.onerror = reject;
+    img.src = imageUrl;
+  });
 }
 
 function parseBOMFromOCR(text) {
