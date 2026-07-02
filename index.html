@@ -678,15 +678,16 @@ const MATERIAL_TYPES = [
 const MATERIAL_MAP = {
   // 有机材料
   'epdm': 'organic', 'nbr': 'organic', '丁腈橡胶': 'organic', '硅橡胶': 'organic', 'silicone': 'organic',
-  'pom': 'organic', '聚甲醛': 'organic', 'pp': 'organic', 'pe': 'organic', 'pa': 'organic', '聚酰胺': 'organic',
+  'pom': 'organic', '聚甲醛': 'organic', 'pp': 'organic', '聚丙烯': 'organic', 'pe': 'organic', 'pa': 'organic', 'pa66': 'organic', 'pa6': 'organic', '聚酰胺': 'organic',
   'nylon': 'organic', 'ptfe': 'organic', '聚四氟乙烯': 'organic', 'pps': 'organic', '聚苯硫醚': 'organic',
   'pvc': 'organic', 'abs': 'organic', 'pc': 'organic', 'psu': 'organic', 'peek': 'organic',
   '橡胶': 'organic', '塑料': 'organic', ' elastomer': 'organic', '密封圈': 'organic',
+  '树脂': 'organic', 'epoxy': 'organic',
   // 金属材料
   '黄铜': 'metal', '铜': 'metal', 'cw617n': 'metal', 'cw614n': 'metal', 'cuzn': 'metal',
   '不锈钢': 'metal', 'sus304': 'metal', 'sus316': 'metal', '304': 'metal', '316': 'metal',
-  '锌合金': 'metal', '铝合金': 'metal', '铸铁': 'metal', '钢': 'metal', '铁': 'metal',
-  'brass': 'metal', 'copper': 'metal', 'stainless': 'metal', 'steel': 'metal', 'zinc': 'metal',
+  '锌合金': 'metal', '铝合金': 'metal', '铸铁': 'metal', '钢': 'metal', '铁': 'metal', '碳钢': 'metal',
+  'brass': 'metal', 'copper': 'metal', 'stainless': 'metal', 'steel': 'metal', 'zinc': 'metal', '铝': 'metal',
   // 陶瓷材料
   '陶瓷': 'ceramic', '氧化铝': 'ceramic', '氧化锆': 'ceramic', 'ceramic': 'ceramic', 'alumina': 'ceramic',
   // 水泥材料
@@ -1656,7 +1657,7 @@ function parseBOMFromOCR(text) {
   const results = [];
   const lines = text.split('\n').map(l => l.trim()).filter(l => l);
   
-  // Join continuation lines: if a line doesn't start with a digit, append to previous
+  // Join lines that don't start with a number
   const merged = [];
   for (const line of lines) {
     if (merged.length > 0 && !/^\d/.test(line)) {
@@ -1666,74 +1667,53 @@ function parseBOMFromOCR(text) {
     }
   }
   
-  // Strategy: try multiple patterns, from most specific to most general
-  for (const line of merged) {
-    let matched = false;
-    
-    // Pattern A: Full BOM row: "1 P09Z0749 把手 锌合金 29.86 1 3182.06 78.90%"
-    //              no   code       name   material  weight  qty  area    pct
-    let m = line.match(/^(\d+)\s+([A-Za-z0-9\-\.\/]+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5\d]+)\s+([\d.]+)\s+(\d+)(?:\s+([\d.]+)\s*([\d.]+)%?)?$/);
-    if (m) {
-      const [, _no, _code, _name, _mat, _wt, _qty, _area, _pct] = m;
-      results.push({ no:parseInt(_no), code:_code.trim(), name:_name.trim(), material:_mat.trim(), qty:parseInt(_qty), area: _area ? (parseFloat(_area)/100).toFixed(2) : '', pct: _pct ? parseFloat(_pct) : 0, type: guessMaterialType(_mat), conf:'high' });
-      matched = true;
-    }
-    
-    // Pattern B: No code: "5 密封垫片 EPDM 0.32 1 197.89 4.91%"
-    if (!matched) {
-      m = line.match(/^(\d+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5\d]+)\s+([\d.]+)\s+(\d+)(?:\s+([\d.]+)\s*([\d.]+)%?)?$/);
-      if (m) {
-        const [, _no, _name, _mat, _wt, _qty, _area, _pct] = m;
-        results.push({ no:parseInt(_no), code:'', name:_name.trim(), material:_mat.trim(), qty:parseInt(_qty), area: _area ? (parseFloat(_area)/100).toFixed(2) : '', pct: _pct ? parseFloat(_pct) : 0, type: guessMaterialType(_mat), conf:'med' });
-        matched = true;
-      }
-    }
-    
-    // Pattern C: No code, no weight: "1 本体 CW617N 1 3182.06 78.90%"
-    if (!matched) {
-      m = line.match(/^(\d+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5\d]+)\s+(\d+)(?:\s+([\d.]+)\s*([\d.]+)%?)?$/);
-      if (m) {
-        const [, _no, _name, _mat, _qty, _area, _pct] = m;
-        results.push({ no:parseInt(_no), code:'', name:_name.trim(), material:_mat.trim(), qty:parseInt(_qty), area: _area ? (parseFloat(_area)/100).toFixed(2) : '', pct: _pct ? parseFloat(_pct) : 0, type: guessMaterialType(_mat), conf:'med' });
-        matched = true;
-      }
-    }
-  }
+  // Standard Chinese BOM columns (from PDF):
+  // 序号 | 物料编码 | 名称 | 数量 | 材料 | 规格 | 备注
+  // no   | code     | name | qty  | mat  | spec | remark
   
-  // If still no results, try cell-by-cell reconstruction from word blocks
-  if (results.length === 0) {
-    // Split text by whitespace and try to find number sequences
-    const allWords = text.split(/[\s\n]+/).filter(w => w);
-    const numberRows = [];
-    let currentRow = [];
-    for (let i = 0; i < allWords.length; i++) {
-      const w = allWords[i];
-      if (/^\d+$/.test(w) && parseInt(w) > 0 && parseInt(w) < 1000) {
-        // Check if next word looks like a code or name
-        if (i + 1 < allWords.length) {
-          if (currentRow.length > 0) numberRows.push(currentRow);
-          currentRow = [w];
-          continue;
-        }
-      }
-      if (currentRow.length > 0) currentRow.push(w);
-    }
-    if (currentRow.length > 0) numberRows.push(currentRow);
+  for (const line of merged) {
+    // Remove common garbage characters from OCR
+    const cleaned = line.replace(/[—\-~‒–—―]/g, ' ').replace(/[·•●]/g, '');
     
-    // Heuristic: parse rows with 3+ words
-    for (const row of numberRows) {
-      if (row.length < 2) continue;
-      const no = parseInt(row[0]);
-      const name = row[1] || '';
-      const code = row[2] && /^[A-Z0-9\-\.\/]+$/.test(row[2]) ? row[2] : '';
-      const matIdx = code ? 3 : 2;
-      const material = row[matIdx] || '';
-      const qty = row[matIdx + 1] ? parseInt(row[matIdx + 1]) || 1 : 1;
-      const area = row[matIdx + 2] ? (parseFloat(row[matIdx + 2]) / 100).toFixed(2) : '';
+    let m = null;
+    
+    // Pattern 1: Standard BOM with code: "1 物料编码 零件名称 1 材料 规格"
+    //   no  code        name     qty mat  spec
+    m = cleaned.match(/^(\d{1,3})\s+([A-Za-z0-9\-\.\/]+)\s+(.+?)\s+(\d+)\s+([A-Za-z0-9\u4e00-\u9fa5\+]{2,10})(?:\s+(.+))?$/);
+    if (m) {
+      const [, _no, _code, _name, _qty, _mat, _rest] = m;
       results.push({
-        no, code, name, material, qty: isNaN(qty) ? 1 : qty, area,
-        pct: 0, type: guessMaterialType(material), conf: 'low'
+        no: parseInt(_no), code: _code.trim(), name: _name.replace(/\s+/g,'').trim(),
+        material: _mat.trim(), qty: parseInt(_qty),
+        area: '', pct: 0, type: guessMaterialType(_mat), conf: 'high'
       });
+      continue;
+    }
+    
+    // Pattern 2: No code BOM: "1 零件名称 1 材料 规格"
+    //   no  name     qty mat  spec
+    m = cleaned.match(/^(\d{1,3})\s+(.+?)\s+(\d+)\s+([A-Za-z0-9\u4e00-\u9fa5\+]{2,10})(?:\s+(.+))?$/);
+    if (m) {
+      const [, _no, _name, _qty, _mat, _rest] = m;
+      results.push({
+        no: parseInt(_no), code: '', name: _name.replace(/\s+/g,'').trim(),
+        material: _mat.trim(), qty: parseInt(_qty),
+        area: '', pct: 0, type: guessMaterialType(_mat), conf: 'med'
+      });
+      continue;
+    }
+    
+    // Pattern 3: Material before qty: "1 零件名称 材料 1 规格"
+    //   no  name     mat  qty  spec  
+    m = cleaned.match(/^(\d{1,3})\s+(.+?)\s+([A-Za-z0-9\u4e00-\u9fa5\+]{2,10})\s+(\d+)(?:\s+(.+))?$/);
+    if (m) {
+      const [, _no, _name, _mat, _qty, _rest] = m;
+      results.push({
+        no: parseInt(_no), code: '', name: _name.replace(/\s+/g,'').trim(),
+        material: _mat.trim(), qty: parseInt(_qty),
+        area: '', pct: 0, type: guessMaterialType(_mat), conf: 'low'
+      });
+      continue;
     }
   }
   
@@ -1750,13 +1730,14 @@ function renderOCRResults() {
     return `
       <div class="ocr-row" data-index="${i}">
         <div class="ocr-num">${r.no}</div>
+        <input type="text" value="${r.code}" placeholder="物料编码" onchange="updateOCR(${i},'code',this.value)" style="min-width:90px;flex:0.8;">
         <input type="text" value="${r.name}" placeholder="零件名" onchange="updateOCR(${i},'name',this.value)">
-        <input type="number" value="${r.qty}" min="1" onchange="updateOCR(${i},'qty',this.value)">
+        <input type="number" value="${r.qty}" min="1" onchange="updateOCR(${i},'qty',this.value)" style="max-width:50px">
         <input type="text" value="${r.material}" placeholder="材料" onchange="updateOCR(${i},'material',this.value)">
         <select onchange="updateOCR(${i},'type',this.value)">
           ${MATERIAL_TYPES.map(t => `<option value="${t.v}" ${t.v===r.type?'selected':''}>${t.l}</option>`).join('')}
         </select>
-        <input type="number" value="${r.area}" placeholder="cm²" step="0.01" onchange="updateOCR(${i},'area',this.value)">
+        <input type="number" value="${r.area}" placeholder="cm²" step="0.01" onchange="updateOCR(${i},'area',this.value)" style="max-width:65px">
         <span class="ocr-conf ${confClass}">${confText}</span>
       </div>
     `;
