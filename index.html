@@ -1207,6 +1207,17 @@ function buildCFRefTable() {
 
 /* ── OCR 爆炸图识别 ── */
 
+// Check Tesseract availability on load
+let tesseractReady = false;
+(async function checkTesseract() {
+  if (typeof Tesseract === 'undefined') {
+    console.warn('Tesseract.js not loaded');
+    return;
+  }
+  tesseractReady = true;
+  console.log('Tesseract.js ready, version:', Tesseract.version);
+})();
+
 // Drag & drop for OCR
 const ocrDrop = document.getElementById('ocrDrop');
 if (ocrDrop) {
@@ -1229,37 +1240,62 @@ async function processOCRFile(file) {
   const progressEl = document.getElementById('ocrProgress');
   const resultPanel = document.getElementById('ocrResultPanel');
   const resultBody = document.getElementById('ocrResultBody');
-  
-  progressEl.textContent = '⏳ 正在识别，请稍候...';
+
+  progressEl.textContent = '⏳ 准备识别...';
   resultPanel.style.display = 'none';
   ocrResults = [];
+
+  // Check Tesseract.js loaded
+  if (typeof Tesseract === 'undefined') {
+    progressEl.textContent = '❌ OCR 引擎未加载，请检查网络连接后刷新页面重试。';
+    return;
+  }
 
   try {
     let imageUrl;
     if (file.type === 'application/pdf') {
-      // For PDF, we'd need a PDF renderer. For now, show message.
       progressEl.textContent = '⚠️ PDF 识别需要额外处理，请先将 PDF 转为图片上传，或使用下方预置案例。';
       return;
     } else {
       imageUrl = URL.createObjectURL(file);
     }
 
-    const result = await Tesseract.recognize(imageUrl, 'chi_sim+eng', {
-      logger: m => {
-        if (m.status === 'recognizing text') {
-          progressEl.textContent = `⏳ 识别中... ${(m.progress * 100).toFixed(0)}%`;
+    progressEl.textContent = '⏳ 正在初始化 OCR 引擎（首次使用需下载语言包，约 10-20 秒）...';
+
+    let worker;
+    try {
+      worker = await Tesseract.createWorker('chi_sim+eng', 1, {
+        logger: m => {
+          console.log('Tesseract:', m);
+          if (m.status === 'loading language traineddata') {
+            progressEl.textContent = `⏳ 正在下载语言包... ${(m.progress * 100).toFixed(0)}%`;
+          } else if (m.status === 'initializing api') {
+            progressEl.textContent = `⏳ 正在初始化 API... ${(m.progress * 100).toFixed(0)}%`;
+          } else if (m.status === 'recognizing text') {
+            progressEl.textContent = `⏳ 识别中... ${(m.progress * 100).toFixed(0)}%`;
+          }
+        },
+        errorHandler: err => {
+          console.error('Tesseract worker error:', err);
         }
-      }
-    });
+      });
+    } catch (initErr) {
+      progressEl.textContent = '❌ OCR 引擎初始化失败：' + initErr.message + '。请检查网络连接（需访问 unpkg.com 和 GitHub 下载资源）。';
+      return;
+    }
+
+    progressEl.textContent = '⏳ 正在识别文字...';
+    const result = await worker.recognize(imageUrl);
+    await worker.terminate();
 
     const text = result.data.text;
     console.log('OCR Raw:', text);
-    
+
     // Parse BOM table from OCR text
     ocrResults = parseBOMFromOCR(text);
-    
+
     if (ocrResults.length === 0) {
-      progressEl.textContent = '⚠️ 未能识别到 BOM 表格数据。请确保爆炸图右下角有规范的零件清单表格。';
+      progressEl.textContent = '⚠️ 未能识别到 BOM 表格数据。请确保爆炸图右下角有规范的零件清单表格。原始识别文本已输出到浏览器控制台（F12）。';
       return;
     }
 
@@ -1269,8 +1305,8 @@ async function processOCRFile(file) {
     resultPanel.style.display = '';
 
   } catch (err) {
-    console.error(err);
-    progressEl.textContent = '❌ 识别失败：' + err.message;
+    console.error('OCR Error:', err);
+    progressEl.textContent = '❌ 识别失败：' + (err.message || '未知错误') + '。请打开浏览器控制台（F12）查看详细错误信息。';
   }
 }
 
