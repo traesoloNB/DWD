@@ -1656,58 +1656,84 @@ function parseBOMFromOCR(text) {
   const results = [];
   const lines = text.split('\n').map(l => l.trim()).filter(l => l);
   
-  // Try to find table rows with pattern: number | code | name | material | weight | qty | area | pct
-  // Look for lines that start with a number and have material-like content
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Pattern 1: "1 P09Z0749 把手 锌合金 29.86 1"
-    // Pattern 2: "6 P01B1141 G1/2本体 CW617N 85.40 1 3182.06 78.90%"
-    const match = line.match(/^(\d+)\s+([A-Z0-9]+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5]+)\s+([\d.]+)\s+(\d+)(?:\s+([\d.]+)\s+([\d.]+%?))?/);
-    
-    if (match) {
-      const [, no, code, name, material, weight, qty, area, pct] = match;
-      const matType = guessMaterialType(material);
-      const areaCm2 = area ? (parseFloat(area) / 100).toFixed(2) : '';
-      const pctVal = pct ? parseFloat(pct.replace('%', '')) : 0;
-      
-      results.push({
-        no: parseInt(no),
-        code: code.trim(),
-        name: name.trim(),
-        material: material.trim(),
-        qty: parseInt(qty),
-        area: areaCm2,
-        pct: pctVal,
-        type: matType,
-        conf: 'high'
-      });
+  // Join continuation lines: if a line doesn't start with a digit, append to previous
+  const merged = [];
+  for (const line of lines) {
+    if (merged.length > 0 && !/^\d/.test(line)) {
+      merged[merged.length - 1] += ' ' + line;
+    } else {
+      merged.push(line);
     }
   }
   
-  // If no structured match, try simpler pattern
-  if (results.length === 0) {
-    for (const line of lines) {
-      // Try: "5 密封垫片 EPDM 0.32 1 197.89 4.91%"
-      const simpleMatch = line.match(/^(\d+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5]+)\s+([\d.]+)\s+(\d+)(?:\s+([\d.]+)\s+([\d.]+%?))?/);
-      if (simpleMatch) {
-        const [, no, name, material, weight, qty, area, pct] = simpleMatch;
-        const matType = guessMaterialType(material);
-        const areaCm2 = area ? (parseFloat(area) / 100).toFixed(2) : '';
-        const pctVal = pct ? parseFloat(pct.replace('%', '')) : 0;
-        
-        results.push({
-          no: parseInt(no),
-          code: '',
-          name: name.trim(),
-          material: material.trim(),
-          qty: parseInt(qty),
-          area: areaCm2,
-          pct: pctVal,
-          type: matType,
-          conf: 'med'
-        });
+  // Strategy: try multiple patterns, from most specific to most general
+  for (const line of merged) {
+    let matched = false;
+    
+    // Pattern A: Full BOM row: "1 P09Z0749 把手 锌合金 29.86 1 3182.06 78.90%"
+    //              no   code       name   material  weight  qty  area    pct
+    let m = line.match(/^(\d+)\s+([A-Za-z0-9\-\.\/]+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5\d]+)\s+([\d.]+)\s+(\d+)(?:\s+([\d.]+)\s*([\d.]+)%?)?$/);
+    if (m) {
+      const [, _no, _code, _name, _mat, _wt, _qty, _area, _pct] = m;
+      results.push({ no:parseInt(_no), code:_code.trim(), name:_name.trim(), material:_mat.trim(), qty:parseInt(_qty), area: _area ? (parseFloat(_area)/100).toFixed(2) : '', pct: _pct ? parseFloat(_pct) : 0, type: guessMaterialType(_mat), conf:'high' });
+      matched = true;
+    }
+    
+    // Pattern B: No code: "5 密封垫片 EPDM 0.32 1 197.89 4.91%"
+    if (!matched) {
+      m = line.match(/^(\d+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5\d]+)\s+([\d.]+)\s+(\d+)(?:\s+([\d.]+)\s*([\d.]+)%?)?$/);
+      if (m) {
+        const [, _no, _name, _mat, _wt, _qty, _area, _pct] = m;
+        results.push({ no:parseInt(_no), code:'', name:_name.trim(), material:_mat.trim(), qty:parseInt(_qty), area: _area ? (parseFloat(_area)/100).toFixed(2) : '', pct: _pct ? parseFloat(_pct) : 0, type: guessMaterialType(_mat), conf:'med' });
+        matched = true;
       }
+    }
+    
+    // Pattern C: No code, no weight: "1 本体 CW617N 1 3182.06 78.90%"
+    if (!matched) {
+      m = line.match(/^(\d+)\s+(.+?)\s+([A-Za-z\u4e00-\u9fa5\d]+)\s+(\d+)(?:\s+([\d.]+)\s*([\d.]+)%?)?$/);
+      if (m) {
+        const [, _no, _name, _mat, _qty, _area, _pct] = m;
+        results.push({ no:parseInt(_no), code:'', name:_name.trim(), material:_mat.trim(), qty:parseInt(_qty), area: _area ? (parseFloat(_area)/100).toFixed(2) : '', pct: _pct ? parseFloat(_pct) : 0, type: guessMaterialType(_mat), conf:'med' });
+        matched = true;
+      }
+    }
+  }
+  
+  // If still no results, try cell-by-cell reconstruction from word blocks
+  if (results.length === 0) {
+    // Split text by whitespace and try to find number sequences
+    const allWords = text.split(/[\s\n]+/).filter(w => w);
+    const numberRows = [];
+    let currentRow = [];
+    for (let i = 0; i < allWords.length; i++) {
+      const w = allWords[i];
+      if (/^\d+$/.test(w) && parseInt(w) > 0 && parseInt(w) < 1000) {
+        // Check if next word looks like a code or name
+        if (i + 1 < allWords.length) {
+          if (currentRow.length > 0) numberRows.push(currentRow);
+          currentRow = [w];
+          continue;
+        }
+      }
+      if (currentRow.length > 0) currentRow.push(w);
+    }
+    if (currentRow.length > 0) numberRows.push(currentRow);
+    
+    // Heuristic: parse rows with 3+ words
+    for (const row of numberRows) {
+      if (row.length < 2) continue;
+      const no = parseInt(row[0]);
+      const name = row[1] || '';
+      const code = row[2] && /^[A-Z0-9\-\.\/]+$/.test(row[2]) ? row[2] : '';
+      const matIdx = code ? 3 : 2;
+      const material = row[matIdx] || '';
+      const qty = row[matIdx + 1] ? parseInt(row[matIdx + 1]) || 1 : 1;
+      const area = row[matIdx + 2] ? (parseFloat(row[matIdx + 2]) / 100).toFixed(2) : '';
+      results.push({
+        no, code, name, material, qty: isNaN(qty) ? 1 : qty, area,
+        pct: 0, type: guessMaterialType(material), conf: 'low'
+      });
     }
   }
   
