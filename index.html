@@ -494,6 +494,7 @@
         <div class="ocr-result-body" id="ocrResultBody"></div>
         <div class="ocr-actions">
           <button class="btn btn-outline btn-sm" onclick="clearOCR()">清空</button>
+          <button class="btn btn-outline btn-sm" onclick="reRunOCR()">🔄 重新识别</button>
           <button class="btn btn-primary btn-sm" onclick="applyOCRToBOM()">✓ 确认并填充到 BOM</button>
         </div>
       </div>
@@ -1254,6 +1255,7 @@ async function processOCRFile(file) {
   const progressEl = document.getElementById('ocrProgress');
   const resultPanel = document.getElementById('ocrResultPanel');
   
+  lastOcrFile = file; // 记录文件，方便重新识别
   progressEl.textContent = '⏳ 正在处理文件...';
   resultPanel.style.display = 'none';
   ocrResults = [];
@@ -1384,6 +1386,17 @@ function showOCRPreview(img) {
   const preview = document.createElement('div');
   preview.className = 'ocr-preview';
   preview.style.cssText = 'margin-top:.5rem;position:relative;max-height:200px;overflow:hidden;border-radius:6px;';
+  
+  // 清除图片按钮
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = '✕ 清除图片';
+  clearBtn.style.cssText = 'position:absolute;top:6px;right:6px;z-index:2;background:rgba(0,0,0,0.65);color:#fff;border:none;border-radius:4px;padding:2px 10px;font-size:.75rem;cursor:pointer;backdrop-filter:blur(4px);';
+  clearBtn.title = '清除已上传的图片';
+  clearBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    clearOCRPreview();
+  });
+  preview.appendChild(clearBtn);
   
   const thumb = document.createElement('img');
   thumb.src = img.src || img;
@@ -1737,6 +1750,27 @@ function clearOCR() {
   ocrResults = [];
   document.getElementById('ocrResultPanel').style.display = 'none';
   document.getElementById('ocrProgress').textContent = '';
+}
+
+// 记录最后一次上传的文件，方便重新识别
+let lastOcrFile = null;
+
+function clearOCRPreview() {
+  const drop = document.getElementById('ocrDrop');
+  const preview = drop.querySelector('.ocr-preview');
+  if (preview) preview.remove();
+  // 重置文件输入框，允许重新选择同一文件
+  const input = document.getElementById('ocrInput');
+  if (input) input.value = '';
+  lastOcrFile = null;
+}
+
+function reRunOCR() {
+  if (!lastOcrFile) {
+    document.getElementById('ocrProgress').textContent = '⚠️ 没有已上传的图片，请先上传一张爆炸图。';
+    return;
+  }
+  processOCRFile(lastOcrFile);
 }
 
 function applyOCRToBOM() {
