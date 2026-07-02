@@ -1492,17 +1492,24 @@ async function testBaiduOcr() {
   const btn = document.getElementById('btnTestBaidu');
   const status = document.getElementById('baiduConfigStatus');
   btn.disabled = true;
-  status.innerHTML = '<span style="color:var(--accent);">⏳ 测试中...</span>';
+  status.innerHTML = '<span style="color:var(--accent);">⏳ 测试中（通过代理连接百度，请稍候）...</span>';
   
   try {
+    // 先清除缓存，确保用最新 Key 获取新 Token
+    sessionStorage.removeItem('baidu_access_token');
     const token = await getBaiduAccessToken();
     if (token) {
-      status.innerHTML = '<span style="color:#2e7d32;">✓ 连接成功，API 可用</span>';
+      status.innerHTML = '<span style="color:#2e7d32;">✓ 连接成功，API 可用（Token 有效期至 ' + new Date(Date.now() + 2592000000).toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'}) + '）</span>';
     } else {
-      status.innerHTML = '<span style="color:#c62828;">✗ 获取 Token 失败，请检查 Key</span>';
+      status.innerHTML = '<span style="color:#c62828;">✗ 获取 Token 失败，请检查 API Key 和 Secret Key 是否正确</span>';
     }
   } catch (e) {
-    status.innerHTML = '<span style="color:#c62828;">✗ 连接失败：' + (e.message || '网络错误') + '</span>';
+    const msg = e.message || '网络错误';
+    if (msg.includes('API Key') || msg.includes('Secret Key')) {
+      status.innerHTML = '<span style="color:#c62828;">✗ ' + msg + '</span>';
+    } else {
+      status.innerHTML = '<span style="color:#c62828;">✗ 连接失败：' + msg + '。请确认 API Key 和 Secret Key 填写正确，且已在百度控制台开通"文字识别"服务。</span>';
+    }
   }
   btn.disabled = false;
 }
@@ -1512,22 +1519,60 @@ async function getBaiduAccessToken() {
   const sk = localStorage.getItem('baidu_secret_key');
   if (!ak || !sk) return null;
   
+  // 清除可能已失效的缓存 token
   const cachedToken = sessionStorage.getItem('baidu_access_token');
-  if (cachedToken) return cachedToken;
-  
-  const url = 'https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=' + encodeURIComponent(ak) + '&client_secret=' + encodeURIComponent(sk);
-  const res = await fetch(url, { method: 'POST' });
-  const data = await res.json();
-  if (data.access_token) {
-    sessionStorage.setItem('baidu_access_token', data.access_token);
-    return data.access_token;
+  if (cachedToken) {
+    // 验证缓存 token 是否有效（简单检查：非空且长度合理）
+    if (cachedToken.length > 20) return cachedToken;
+    sessionStorage.removeItem('baidu_access_token');
   }
-  console.error('Baidu token error:', data);
-  return null;
+  
+  const baiduUrl = 'https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=' + encodeURIComponent(ak) + '&client_secret=' + encodeURIComponent(sk);
+  
+  // 百度 OAuth 端点不支持浏览器 CORS，需要通过代理
+  // 尝试多个代理，防止单个代理不可用
+  const proxyOptions = [
+    // 方案1: allorigins（GET 请求代理）
+    'https://api.allorigins.win/raw?url=',
+    // 方案2: corsproxy.io
+    'https://corsproxy.io/?',
+    // 方案3: 直连（某些浏览器/环境可能允许）
+    '',
+  ];
+  
+  let lastError = null;
+  for (const proxy of proxyOptions) {
+    try {
+      const fetchUrl = proxy ? proxy + encodeURIComponent(baiduUrl) : baiduUrl;
+      console.log('Trying token fetch via:', proxy || 'direct');
+      const res = await fetch(fetchUrl, { method: proxy ? 'GET' : 'POST' });
+      const data = await res.json();
+      if (data.access_token) {
+        sessionStorage.setItem('baidu_access_token', data.access_token);
+        console.log('Token obtained successfully, expires in:', data.expires_in, 's');
+        return data.access_token;
+      }
+      if (data.error) {
+        console.error('Baidu token error:', data);
+        lastError = data.error_description || data.error;
+        // 如果是认证错误，不需要尝试其他代理
+        if (data.error === 'invalid_client' || data.error === 'unauthorized_client') {
+          throw new Error('API Key 或 Secret Key 错误：' + (lastError || '请检查是否填写正确'));
+        }
+      }
+    } catch (e) {
+      if (e.message.includes('API Key') || e.message.includes('Secret Key')) throw e;
+      lastError = e.message;
+      console.warn('Proxy failed:', proxy || 'direct', e.message);
+      continue;
+    }
+  }
+  
+  throw new Error('获取百度 Token 失败，所有代理均不可用。请检查网络连接或稍后重试。');
 }
 
 async function callBaiduOCR(base64Image) {
-  const token = await getBaiduAccessToken();
+  let token = await getBaiduAccessToken();
   if (!token) throw new Error('未配置百度 API Key 或获取 Token 失败');
   
   // 通用文字识别（高精度版）
@@ -1538,6 +1583,26 @@ async function callBaiduOCR(base64Image) {
     body: 'image=' + encodeURIComponent(base64Image)
   });
   const data = await res.json();
+  
+  // Token 失效时，清除缓存并重试一次
+  if (data.error_code === 13 || data.error_code === 110) {
+    console.warn('Token expired, clearing cache and retrying...');
+    sessionStorage.removeItem('baidu_access_token');
+    token = await getBaiduAccessToken();
+    if (!token) throw new Error('重新获取 Token 失败');
+    const retryUrl = 'https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic?access_token=' + token;
+    const retryRes = await fetch(retryUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'image=' + encodeURIComponent(base64Image)
+    });
+    const retryData = await retryRes.json();
+    if (retryData.error_code) {
+      throw new Error('百度OCR错误 ' + retryData.error_code + ': ' + retryData.error_msg);
+    }
+    return retryData.words_result || [];
+  }
+  
   if (data.error_code) {
     throw new Error('百度OCR错误 ' + data.error_code + ': ' + data.error_msg);
   }
