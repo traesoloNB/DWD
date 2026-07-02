@@ -1284,27 +1284,28 @@ async function processOCRFile(file) {
     const hasBaiduKey = localStorage.getItem('baidu_api_key') && localStorage.getItem('baidu_secret_key');
     
     if (hasBaiduKey) {
-      // 使用百度OCR表格识别API
-      progressEl.textContent = '⏳ 正在调用百度OCR识别表格...';
+      // 使用百度OCR高精度文字识别（带坐标，有免费额度）
+      progressEl.textContent = '⏳ 正在调用百度OCR识别文字...';
       try {
         const base64 = await fileToBase64FromUrl(imageUrl);
-        const tablesResult = await callBaiduOCR(base64);
+        const wordsResult = await callBaiduOCR(base64);
 
-        if (!tablesResult || tablesResult.length === 0) {
-          progressEl.textContent = '⚠️ 百度OCR未识别到表格。请检查图片清晰度，或直接使用预置示例。';
+        if (!wordsResult || wordsResult.length === 0) {
+          progressEl.textContent = '⚠️ 百度OCR未识别到文字。请检查图片清晰度，或直接使用预置示例。';
           return;
         }
 
-        console.log('Baidu table OCR result:', tablesResult);
+        console.log('Baidu OCR words result:', wordsResult);
 
-        // 解析BOM（传入表格结构数据）
-        ocrResults = parseBOMFromOCR(tablesResult);
+        // 解析BOM（根据坐标重建表格结构）
+        ocrResults = parseBOMFromOCR(wordsResult);
 
         if (ocrResults.length === 0) {
-          // 未能匹配到BOM格式，显示提示
+          // 未能匹配到BOM格式，显示原始文字供参考
+          const rawText = wordsResult.map(w => w.words).join(' ');
           ocrResults = [{no:1, code:'', name:'', material:'', qty:1, area:'', pct:'', type:'organic', conf:'low'}];
           renderOCRResults();
-          progressEl.textContent = '⚠️ 已识别到表格，但未提取到有效的BOM数据。请手动填写或修正。';
+          progressEl.textContent = '⚠️ 已识别到 ' + wordsResult.length + ' 个文字块，但未匹配到标准BOM格式。请手动填写或修正。';
           resultPanel.style.display = '';
           return;
         }
@@ -1587,8 +1588,8 @@ async function callBaiduOCR(base64Image) {
   let token = await getBaiduAccessToken();
   if (!token) throw new Error('未配置百度 API Key 或获取 Token 失败');
 
-  // 使用表格识别API（比通用文字识别更适合BOM表格）
-  const url = 'https://aip.baidubce.com/rest/2.0/ocr/v1/table?access_token=' + token;
+  // 使用通用文字识别高精度版（带坐标，有免费额度）
+  const url = 'https://aip.baidubce.com/rest/2.0/ocr/v1/accurate?access_token=' + token;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1602,7 +1603,7 @@ async function callBaiduOCR(base64Image) {
     sessionStorage.removeItem('baidu_access_token');
     token = await getBaiduAccessToken();
     if (!token) throw new Error('重新获取 Token 失败');
-    const retryUrl = 'https://aip.baidubce.com/rest/2.0/ocr/v1/table?access_token=' + token;
+    const retryUrl = 'https://aip.baidubce.com/rest/2.0/ocr/v1/accurate?access_token=' + token;
     const retryRes = await fetch(retryUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1612,13 +1613,13 @@ async function callBaiduOCR(base64Image) {
     if (retryData.error_code) {
       throw new Error('百度OCR错误 ' + retryData.error_code + ': ' + retryData.error_msg);
     }
-    return retryData.tables_result || [];
+    return retryData.words_result || [];
   }
 
   if (data.error_code) {
     throw new Error('百度OCR错误 ' + data.error_code + ': ' + data.error_msg);
   }
-  return data.tables_result || [];
+  return data.words_result || [];
 }
 
 function fileToBase64(file) {
@@ -1651,77 +1652,112 @@ function fileToBase64FromUrl(imageUrl) {
   });
 }
 
-function parseBOMFromOCR(tablesResult) {
+function parseBOMFromOCR(wordsResult) {
   const results = [];
-  if (!tablesResult || !tablesResult.length) return results;
+  if (!wordsResult || !wordsResult.length) return results;
 
-  // 百度表格识别返回的是 tables_result 数组，每个 table 包含 body（单元格列表）
-  // 每个单元格: {row_start, row_end, col_start, col_end, words}
-  const table = tablesResult[0];
-  const cells = table.body || [];
-  if (!cells.length) return results;
+  // 百度高精度文字识别返回 words_result 数组
+  // 每个元素: {words: '文字', location: {left, top, width, height}}
+  // 根据坐标聚类成行和列
 
-  // 找到最大行列数
-  const maxRow = Math.max(...cells.map(c => c.row_end));
-  const maxCol = Math.max(...cells.map(c => c.col_end));
+  const words = wordsResult.filter(w => w.words && w.location);
+  if (words.length === 0) return results;
 
-  // 构建二维数组 [row][col] = words
-  const grid = Array.from({length: maxRow}, () => Array(maxCol).fill(''));
-  for (const cell of cells) {
-    for (let r = cell.row_start; r < cell.row_end; r++) {
-      for (let c = cell.col_start; c < cell.col_end; c++) {
-        if (r < maxRow && c < maxCol) grid[r][c] = cell.words;
-      }
+  // Step 1: 按 y 坐标（top + height/2 中心点）聚类成行
+  // 使用简单的聚类：如果两个文字块的中心 y 坐标差 < 平均高度 * 0.8，则认为在同一行
+  const avgHeight = words.reduce((sum, w) => sum + w.location.height, 0) / words.length;
+  const rowThreshold = avgHeight * 0.7;
+
+  // 按中心 y 排序
+  const sortedByY = words.map(w => ({
+    ...w,
+    cy: w.location.top + w.location.height / 2,
+    cx: w.location.left + w.location.width / 2
+  })).sort((a, b) => a.cy - b.cy);
+
+  // 聚类成行
+  const rows = [];
+  let currentRow = [sortedByY[0]];
+  for (let i = 1; i < sortedByY.length; i++) {
+    const w = sortedByY[i];
+    const lastCy = currentRow[currentRow.length - 1].cy;
+    if (Math.abs(w.cy - lastCy) < rowThreshold) {
+      currentRow.push(w);
+    } else {
+      rows.push(currentRow);
+      currentRow = [w];
     }
   }
+  if (currentRow.length) rows.push(currentRow);
 
-  console.log('Table grid:', grid);
+  // 每行内按 x 坐标排序
+  rows.forEach(row => row.sort((a, b) => a.cx - b.cx));
 
-  // 识别表头行（包含"序号"、"名称"、"材料"等关键词）
-  let headerRow = -1;
-  for (let r = 0; r < Math.min(5, maxRow); r++) {
-    const rowText = grid[r].join('');
-    if (/(序号|编号|NO\.?|No\.?|number)/i.test(rowText) && /(名称|零件|物料|product|name|article)/i.test(rowText)) {
-      headerRow = r;
+  console.log('OCR rows:', rows.length, rows.map(r => r.map(w => w.words).join(' | ')));
+
+  // Step 2: 识别表头行（包含序号/No + 名称/Name/Product 等关键词）
+  let headerRowIdx = -1;
+  for (let i = 0; i < Math.min(5, rows.length); i++) {
+    const rowText = rows[i].map(w => w.words).join('');
+    if (/(序号|编号|NO\.?|No\.?|number|序号)/i.test(rowText) &&
+        /(名称|零件|物料|product|name|article|图样名称|部件)/i.test(rowText)) {
+      headerRowIdx = i;
       break;
     }
   }
+  // 如果没找到，尝试找包含"材料"或"Material"的行
+  if (headerRowIdx === -1) {
+    for (let i = 0; i < Math.min(5, rows.length); i++) {
+      const rowText = rows[i].map(w => w.words).join('');
+      if (/(材料|材质|mat|material|数量|qty)/i.test(rowText)) {
+        headerRowIdx = i;
+        break;
+      }
+    }
+  }
+  // 兜底：第一行
+  if (headerRowIdx === -1) headerRowIdx = 0;
 
-  // 如果没找到表头，假设第一行是表头
-  if (headerRow === -1) headerRow = 0;
+  const headerRow = rows[headerRowIdx];
 
-  // 映射列名到列索引（支持中英文表头）
+  // Step 3: 映射列名到列索引
   const colMap = {};
-  for (let c = 0; c < maxCol; c++) {
-    const header = (grid[headerRow][c] || '').replace(/\s/g, '');
+  for (let c = 0; c < headerRow.length; c++) {
+    const header = headerRow[c].words.replace(/\s/g, '');
     if (/序号|编号|NO\.?|No\.?|number/i.test(header)) colMap.no = c;
-    else if (/article|编码|代码|code|编号|料号|part.?no|物料编码/i.test(header)) colMap.code = c;
-    else if (/名称|零件|品名|product|name|description|部件/i.test(header)) colMap.name = c;
+    else if (/article|编码|代码|code|编号|料号|part\.?no|物料编码|图样代号/i.test(header)) colMap.code = c;
+    else if (/名称|零件|品名|product|name|description|部件|图样名称/i.test(header)) colMap.name = c;
     else if (/数量|qty\.?|quantity|件数/i.test(header)) colMap.qty = c;
     else if (/材料|材质|mat\.?|material/i.test(header)) colMap.mat = c;
     else if (/规格|spec\.?|型号|specification/i.test(header)) colMap.spec = c;
     else if (/备注|note|remark|说明/i.test(header)) colMap.remark = c;
   }
 
-  // 如果没识别到任何列，尝试按位置猜测
+  // 如果没识别到列，按位置猜测
   if (Object.keys(colMap).length === 0) {
-    // 默认：第0列=序号, 第1列=编码, 第2列=名称, 第3列=数量, 第4列=材料
-    colMap.no = 0; colMap.code = 1; colMap.name = 2; colMap.qty = 3; colMap.mat = 4;
+    colMap.no = 0;
+    colMap.code = headerRow.length > 3 ? 1 : -1;
+    colMap.name = headerRow.length > 3 ? 2 : 1;
+    colMap.qty = headerRow.length > 4 ? 3 : 2;
+    colMap.mat = headerRow.length > 5 ? 4 : 3;
   }
 
-  // 解析数据行
-  for (let r = headerRow + 1; r < maxRow; r++) {
-    const noVal = colMap.no !== undefined ? grid[r][colMap.no] : '';
+  console.log('Column mapping:', colMap, 'header:', headerRow.map(w => w.words));
+
+  // Step 4: 解析数据行
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const noVal = colMap.no !== undefined && colMap.no < row.length ? row[colMap.no].words : '';
     const no = parseInt(noVal);
-    if (isNaN(no) || no <= 0) continue; // 跳过非数字序号的行
+    if (isNaN(no) || no <= 0 || no > 999) continue;
 
-    const code = colMap.code !== undefined ? (grid[r][colMap.code] || '') : '';
-    const name = colMap.name !== undefined ? (grid[r][colMap.name] || '') : '';
-    const qtyVal = colMap.qty !== undefined ? grid[r][colMap.qty] : '1';
+    const code = colMap.code !== undefined && colMap.code < row.length ? row[colMap.code].words : '';
+    const name = colMap.name !== undefined && colMap.name < row.length ? row[colMap.name].words : '';
+    const qtyVal = colMap.qty !== undefined && colMap.qty < row.length ? row[colMap.qty].words : '1';
     const qty = parseInt(qtyVal) || 1;
-    const mat = colMap.mat !== undefined ? (grid[r][colMap.mat] || '') : '';
+    const mat = colMap.mat !== undefined && colMap.mat < row.length ? row[colMap.mat].words : '';
 
-    if (!name && !mat && !code) continue; // 跳过空行
+    if (!name && !mat && !code) continue;
 
     results.push({
       no, code: code.trim(), name: name.trim(),
