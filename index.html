@@ -1681,7 +1681,7 @@ function parseBOMFromOCR(tablesResult) {
   let headerRow = -1;
   for (let r = 0; r < Math.min(5, maxRow); r++) {
     const rowText = grid[r].join('');
-    if (/序号|编号|NO/i.test(rowText) && /名称|零件|物料/i.test(rowText)) {
+    if (/(序号|编号|NO\.?|No\.?|number)/i.test(rowText) && /(名称|零件|物料|product|name|article)/i.test(rowText)) {
       headerRow = r;
       break;
     }
@@ -1690,17 +1690,17 @@ function parseBOMFromOCR(tablesResult) {
   // 如果没找到表头，假设第一行是表头
   if (headerRow === -1) headerRow = 0;
 
-  // 映射列名到列索引
+  // 映射列名到列索引（支持中英文表头）
   const colMap = {};
   for (let c = 0; c < maxCol; c++) {
     const header = (grid[headerRow][c] || '').replace(/\s/g, '');
-    if (/序号|编号|NO|No/i.test(header)) colMap.no = c;
-    else if (/编码|代码|code|编号|料号/i.test(header)) colMap.code = c;
-    else if (/名称|零件|物料|品名|description|part/i.test(header)) colMap.name = c;
-    else if (/数量|qty|quantity|件数/i.test(header)) colMap.qty = c;
-    else if (/材料|材质|mat|material/i.test(header)) colMap.mat = c;
-    else if (/规格|spec|型号|型号/i.test(header)) colMap.spec = c;
-    else if (/备注|note|说明/i.test(header)) colMap.remark = c;
+    if (/序号|编号|NO\.?|No\.?|number/i.test(header)) colMap.no = c;
+    else if (/article|编码|代码|code|编号|料号|part.?no|物料编码/i.test(header)) colMap.code = c;
+    else if (/名称|零件|品名|product|name|description|部件/i.test(header)) colMap.name = c;
+    else if (/数量|qty\.?|quantity|件数/i.test(header)) colMap.qty = c;
+    else if (/材料|材质|mat\.?|material/i.test(header)) colMap.mat = c;
+    else if (/规格|spec\.?|型号|specification/i.test(header)) colMap.spec = c;
+    else if (/备注|note|remark|说明/i.test(header)) colMap.remark = c;
   }
 
   // 如果没识别到任何列，尝试按位置猜测
