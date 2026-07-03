@@ -474,9 +474,9 @@
         <button class="btn btn-primary btn-sm" onclick="recognizeSelectedArea()" id="btnRecognizeSelected">🔍 识别选区</button>
         <span style="font-size:.75rem;color:var(--muted);" id="selectionStatus"></span>
       </div>
-      <div style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:auto;background:#f8fafc;max-height:700px;display:inline-block;max-width:100%;">
-        <div style="position:relative;display:inline-block;">
-          <canvas id="ocrSelectionCanvas"></canvas>
+      <div style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:auto;background:#f8fafc;max-height:80vh;width:100%;box-sizing:border-box;">
+        <div id="selectionWrapper" style="position:relative;display:inline-block;">
+          <canvas id="ocrSelectionCanvas" style="display:block;"></canvas>
           <div id="selectionOverlay" style="position:absolute;top:0;left:0;cursor:crosshair;"></div>
         </div>
       </div>
@@ -1351,14 +1351,28 @@ function showSelectionOnCanvas(img) {
   ocrSelection = null;
   
   const canvas = document.getElementById('ocrSelectionCanvas');
+  const overlay = document.getElementById('selectionOverlay');
+  const wrapper = document.getElementById('selectionWrapper');
   
-  // 计算最佳显示尺寸：宽度最大 900px，高度不限（支持滚动）
-  let displayW = Math.min(img.naturalWidth, 900);
-  let displayH = displayW * (img.naturalHeight / img.naturalWidth);
+  // 计算显示尺寸：原始分辨率，但最小宽度 600px（太小就放大）
+  let displayW = img.naturalWidth;
+  let displayH = img.naturalHeight;
   
-  // 画布用原始分辨率
+  if (displayW < 600) {
+    const scale = 600 / displayW;
+    displayW = 600;
+    displayH = Math.round(img.naturalHeight * scale);
+  }
+  if (displayW > 1200) {
+    const scale = 1200 / displayW;
+    displayW = 1200;
+    displayH = Math.round(img.naturalHeight * scale);
+  }
+  
+  // 画布 = 原始分辨率（用于精确裁剪）
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
+  // CSS 显示尺寸
   canvas.style.width = displayW + 'px';
   canvas.style.height = displayH + 'px';
   
@@ -1366,12 +1380,11 @@ function showSelectionOnCanvas(img) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0);
   
-  // 设置 overlay 尺寸匹配画布显示尺寸
-  const overlay = document.getElementById('selectionOverlay');
+  // overlay 尺寸匹配 canvas 显示尺寸
   overlay.style.width = displayW + 'px';
   overlay.style.height = displayH + 'px';
   
-  document.getElementById('selectionStatus').textContent = '拖动鼠标画出选框';
+  document.getElementById('selectionStatus').textContent = '图片尺寸：' + img.naturalWidth + '×' + img.naturalHeight + '，拖动鼠标画出选框';
 }
 
 function getCanvasMousePos(e) {
@@ -1584,7 +1597,7 @@ async function pdfToImage(file) {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
     const page = await pdf.getPage(1);
-    const scale = 2;
+    const scale = 3;
     const viewport = page.getViewport({scale});
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
