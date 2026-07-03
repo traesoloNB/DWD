@@ -479,7 +479,8 @@
         <span style="font-size:.72rem;color:var(--muted);margin:0 .3rem;">|</span>
         <button class="btn btn-sm" onclick="rotateImage()" title="顺时针旋转90°" style="padding:.2rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:.8rem;">🔄 旋转</button>
         <span style="font-size:.72rem;color:var(--muted);margin:0 .3rem;">|</span>
-        <button class="btn btn-outline btn-sm" onclick="clearSelection()" id="btnClearSelection">✕ 清除选区</button>
+        <button class="btn btn-outline btn-sm" onclick="clearSelection()" id="btnClearSelection">↩ 撤销上一框</button>
+        <button class="btn btn-outline btn-sm" onclick="clearAllSelections()" style="font-size:.72rem;padding:.15rem .4rem;">✕ 全部清除</button>
         <button class="btn btn-primary btn-sm" onclick="recognizeSelectedArea()" id="btnRecognizeSelected">🔍 识别选区</button>
         <span style="font-size:.75rem;color:var(--muted);" id="selectionStatus"></span>
       </div>
@@ -1352,11 +1353,22 @@ async function processOCRFile(file) {
 // ═══════════════════════════════════════════
 
 let ocrSourceImage = null;    // 原始Image对象
-let ocrSelection = null;      // {x,y,w,h} canvas像素坐标
+let ocrSelections = [];       // [{x,y,w,h}, ...] 多个选区的canvas像素坐标
+let ocrCurrentSelection = null; // 当前正在拖拽的临时选区
 let ocrIsDrawing = false;
 let ocrStartX = 0, ocrStartY = 0;
 let ocrZoom = 1.0;           // 缩放倍率
 let ocrRotation = 0;         // 旋转角度 0/90/180/270
+
+// 选区颜色方案：蓝 → 红 → 绿 → 橙 → 紫 → 青
+const SELECTION_COLORS = [
+  { border: '#2196F3', fill: 'rgba(33,150,243,0.12)', label: '蓝' },
+  { border: '#F44336', fill: 'rgba(244,67,54,0.12)', label: '红' },
+  { border: '#4CAF50', fill: 'rgba(76,175,80,0.12)', label: '绿' },
+  { border: '#FF9800', fill: 'rgba(255,152,0,0.12)', label: '橙' },
+  { border: '#9C27B0', fill: 'rgba(156,39,176,0.12)', label: '紫' },
+  { border: '#00BCD4', fill: 'rgba(0,188,212,0.12)', label: '青' },
+];
 
 /** 在canvas上渲染当前旋转角度的图片 */
 function renderRotatedImage() {
@@ -1401,7 +1413,8 @@ function applyZoom() {
 
 function showSelectionOnCanvas(img) {
   ocrSourceImage = img;
-  ocrSelection = null;
+  ocrSelections = [];
+  ocrCurrentSelection = null;
   ocrZoom = 1.0;
   ocrRotation = 0;
   
@@ -1436,33 +1449,68 @@ function drawSelectionRect() {
   // 重绘当前旋转角度的图片
   renderRotatedImage();
   
-  if (ocrSelection && ocrSelection.w > 5 && ocrSelection.h > 5) {
-    // 绘制选框
-    ctx.fillStyle = 'rgba(33,150,243,0.12)';
-    ctx.fillRect(ocrSelection.x, ocrSelection.y, ocrSelection.w, ocrSelection.h);
-    ctx.strokeStyle = '#2196F3';
+  // 绘制已确认的所有选区（不同颜色）
+  ocrSelections.forEach((sel, i) => {
+    if (sel.w < 5 || sel.h < 5) return;
+    const colorIdx = i % SELECTION_COLORS.length;
+    const c = SELECTION_COLORS[colorIdx];
+    
+    ctx.fillStyle = c.fill;
+    ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
+    ctx.strokeStyle = c.border;
     ctx.lineWidth = 2;
     ctx.setLineDash([]);
-    ctx.strokeRect(ocrSelection.x, ocrSelection.y, ocrSelection.w, ocrSelection.h);
+    ctx.strokeRect(sel.x, sel.y, sel.w, sel.h);
+    
+    // 左上角标签
+    const labelText = '#' + (i + 1) + ' ' + c.label;
+    ctx.font = 'bold 14px sans-serif';
+    const textW = ctx.measureText(labelText).width + 8;
+    ctx.fillStyle = c.border;
+    ctx.fillRect(sel.x, sel.y, textW, 20);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(labelText, sel.x + 4, sel.y + 15);
     
     // 边角标记
     const corners = [
-      [ocrSelection.x, ocrSelection.y],
-      [ocrSelection.x + ocrSelection.w, ocrSelection.y],
-      [ocrSelection.x, ocrSelection.y + ocrSelection.h],
-      [ocrSelection.x + ocrSelection.w, ocrSelection.y + ocrSelection.h]
+      [sel.x, sel.y],
+      [sel.x + sel.w, sel.y],
+      [sel.x, sel.y + sel.h],
+      [sel.x + sel.w, sel.y + sel.h]
     ];
-    ctx.fillStyle = '#2196F3';
+    ctx.fillStyle = c.border;
     corners.forEach(([cx, cy]) => {
       ctx.beginPath();
       ctx.arc(cx, cy, 4, 0, Math.PI * 2);
       ctx.fill();
     });
-    
-    document.getElementById('selectionStatus').textContent =
-      `已选区域：${Math.round(ocrSelection.w)}×${Math.round(ocrSelection.h)} 像素`;
+  });
+  
+  // 绘制当前正在拖拽的临时选区（虚线白色）
+  if (ocrCurrentSelection && ocrCurrentSelection.w > 3 && ocrCurrentSelection.h > 3) {
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(ocrCurrentSelection.x, ocrCurrentSelection.y, ocrCurrentSelection.w, ocrCurrentSelection.h);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 3]);
+    ctx.strokeRect(ocrCurrentSelection.x, ocrCurrentSelection.y, ocrCurrentSelection.w, ocrCurrentSelection.h);
+    ctx.setLineDash([]);
+  }
+  
+  // 更新状态文字
+  updateSelectionStatus();
+}
+
+function updateSelectionStatus() {
+  const statusEl = document.getElementById('selectionStatus');
+  if (ocrSelections.length === 0) {
+    statusEl.textContent = '拖动鼠标画出选框（可多次框选不同区域）';
   } else {
-    document.getElementById('selectionStatus').textContent = '拖动鼠标画出选框';
+    const labels = ocrSelections.map((_, i) => {
+      const c = SELECTION_COLORS[i % SELECTION_COLORS.length];
+      return '#' + (i + 1) + '(' + c.label + ')';
+    });
+    statusEl.textContent = '已选 ' + ocrSelections.length + ' 个区域：' + labels.join(' ');
   }
 }
 
@@ -1475,7 +1523,7 @@ selOverlay.addEventListener('mousedown', function(e) {
   const pos = getCanvasMousePos(e);
   ocrStartX = pos.x;
   ocrStartY = pos.y;
-  ocrSelection = null;
+  ocrCurrentSelection = null;
 });
 
 document.addEventListener('mousemove', function(e) {
@@ -1485,16 +1533,19 @@ document.addEventListener('mousemove', function(e) {
   const y = Math.min(ocrStartY, pos.y);
   const w = Math.abs(pos.x - ocrStartX);
   const h = Math.abs(pos.y - ocrStartY);
-  ocrSelection = { x, y, w, h };
+  ocrCurrentSelection = { x, y, w, h };
   drawSelectionRect();
 });
 
 document.addEventListener('mouseup', function() {
+  if (!ocrIsDrawing) return;
   ocrIsDrawing = false;
-  if (ocrSelection && (ocrSelection.w < 10 || ocrSelection.h < 10)) {
-    ocrSelection = null;
-    drawSelectionRect();
+  if (ocrCurrentSelection && ocrCurrentSelection.w >= 10 && ocrCurrentSelection.h >= 10) {
+    // 确认选区：加入数组
+    ocrSelections.push({...ocrCurrentSelection});
   }
+  ocrCurrentSelection = null;
+  drawSelectionRect();
 });
 
 // 触摸支持
@@ -1504,7 +1555,7 @@ selOverlay.addEventListener('touchstart', function(e) {
   const pos = getCanvasMousePos(e);
   ocrStartX = pos.x;
   ocrStartY = pos.y;
-  ocrSelection = null;
+  ocrCurrentSelection = null;
 });
 
 selOverlay.addEventListener('touchmove', function(e) {
@@ -1515,22 +1566,35 @@ selOverlay.addEventListener('touchmove', function(e) {
   const y = Math.min(ocrStartY, pos.y);
   const w = Math.abs(pos.x - ocrStartX);
   const h = Math.abs(pos.y - ocrStartY);
-  ocrSelection = { x, y, w, h };
+  ocrCurrentSelection = { x, y, w, h };
   drawSelectionRect();
 });
 
 selOverlay.addEventListener('touchend', function(e) {
+  if (!ocrIsDrawing) return;
   ocrIsDrawing = false;
-  if (ocrSelection && (ocrSelection.w < 10 || ocrSelection.h < 10)) {
-    ocrSelection = null;
-    drawSelectionRect();
+  if (ocrCurrentSelection && ocrCurrentSelection.w >= 10 && ocrCurrentSelection.h >= 10) {
+    ocrSelections.push({...ocrCurrentSelection});
   }
+  ocrCurrentSelection = null;
+  drawSelectionRect();
 });
 
 function clearSelection() {
-  ocrSelection = null;
+  if (ocrSelections.length > 0) {
+    // 清除最后一个选区（方便修改）
+    ocrSelections.pop();
+    drawSelectionRect();
+    document.getElementById('selectionStatus').textContent =
+      '已撤销最后一个选区，剩余 ' + ocrSelections.length + ' 个';
+  }
+}
+
+function clearAllSelections() {
+  ocrSelections = [];
+  ocrCurrentSelection = null;
   drawSelectionRect();
-  document.getElementById('selectionStatus').textContent = '选区已清除，重新拖动鼠标画出选框';
+  document.getElementById('selectionStatus').textContent = '已清除所有选区，重新拖动鼠标画出选框';
 }
 
 // ── 缩放与旋转 ──
@@ -1585,7 +1649,8 @@ function zoomReset() {
 
 function rotateImage() {
   ocrRotation = (ocrRotation + 90) % 360;
-  ocrSelection = null; // 旋转后坐标空间变化，清空选区
+  ocrSelections = []; // 旋转后坐标空间变化，清空所有选区
+  ocrCurrentSelection = null;
   renderRotatedImage();
   applyZoom();
   drawSelectionRect();
@@ -1603,7 +1668,7 @@ async function recognizeSelectedArea() {
     return;
   }
   
-  if (!ocrSelection || ocrSelection.w < 10 || ocrSelection.h < 10) {
+  if (ocrSelections.length === 0) {
     progressEl.textContent = '⚠️ 请先用鼠标在图片上框选出 BOM 表格区域！';
     return;
   }
@@ -1616,47 +1681,57 @@ async function recognizeSelectedArea() {
     return;
   }
   
-  progressEl.textContent = '⏳ 正在裁剪选中区域并调用百度OCR识别...';
+  progressEl.textContent = '⏳ 正在识别 ' + ocrSelections.length + ' 个选区...';
   resultPanel.style.display = 'none';
   fallbackPanel.style.display = 'none';
   ocrResults = [];
   
   try {
-    // 裁剪选中区域为独立图片
-    const { x, y, w, h } = ocrSelection;
     const canvas = document.getElementById('ocrSelectionCanvas');
+    let allWordsResult = [];
     
-    const cropCanvas = document.createElement('canvas');
-    cropCanvas.width = w;
-    cropCanvas.height = h;
-    const cropCtx = cropCanvas.getContext('2d');
-    cropCtx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
+    for (let i = 0; i < ocrSelections.length; i++) {
+      const sel = ocrSelections[i];
+      const colorLabel = SELECTION_COLORS[i % SELECTION_COLORS.length].label;
+      progressEl.textContent = '⏳ 识别选区 #' + (i + 1) + '(' + colorLabel + ')...';
+      
+      // 裁剪选中区域
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = sel.w;
+      cropCanvas.height = sel.h;
+      const cropCtx = cropCanvas.getContext('2d');
+      cropCtx.drawImage(canvas, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
+      
+      const croppedBase64 = cropCanvas.toDataURL('image/jpeg', 0.95).split(',')[1];
+      console.log('选区 #' + (i + 1) + ':', Math.round(sel.w), 'x', Math.round(sel.h), 'px');
+      
+      // 调用百度OCR
+      const wordsResult = await callBaiduOCR(croppedBase64);
+      console.log('选区 #' + (i + 1) + ' OCR 返回:', wordsResult ? wordsResult.length + ' items' : 'empty');
+      
+      if (wordsResult && wordsResult.length > 0) {
+        allWordsResult = allWordsResult.concat(wordsResult);
+      }
+    }
     
-    const croppedBase64 = cropCanvas.toDataURL('image/jpeg', 0.95).split(',')[1];
-    console.log('Cropped region:', Math.round(w), 'x', Math.round(h), 'px, base64:', croppedBase64.length);
-    
-    // 调用百度OCR
-    const wordsResult = await callBaiduOCR(croppedBase64);
-    console.log('Baidu OCR returned:', wordsResult ? wordsResult.length + ' items' : 'empty');
-    
-    if (!wordsResult || wordsResult.length === 0) {
-      progressEl.textContent = '⚠️ 百度OCR未识别到文字。请确认框选区域包含 BOM 表格文字。';
+    if (allWordsResult.length === 0) {
+      progressEl.textContent = '⚠️ 所有选区的百度OCR均未识别到文字。请确认框选区域包含 BOM 表格文字。';
       return;
     }
     
-    // 尝试解析BOM
-    ocrResults = parseBOMFromOCR(wordsResult);
+    // 合并所有选区的结果解析BOM
+    ocrResults = parseBOMFromOCR(allWordsResult);
     
     if (ocrResults.length === 0) {
-      const rawText = wordsResult.map(w => w.words).join('\n');
+      const rawText = allWordsResult.map(w => w.words).join('\n');
       document.getElementById('ocrFallbackText').value = rawText;
       fallbackPanel.style.display = 'block';
-      progressEl.textContent = '⚠️ 识别到 ' + wordsResult.length + ' 个文字，但未匹配到 BOM 格式。文本框里是识别结果，调整格式后点"重新解析"。';
+      progressEl.textContent = '⚠️ 共识别到 ' + allWordsResult.length + ' 个文字（来自 ' + ocrSelections.length + ' 个选区），但未匹配到 BOM 格式。文本框里是识别结果，调整格式后点"重新解析"。';
       return;
     }
     
     renderOCRResults();
-    progressEl.textContent = '✅ 识别完成，共 ' + ocrResults.length + ' 个零件。';
+    progressEl.textContent = '✅ 识别完成（' + ocrSelections.length + ' 个选区），共 ' + ocrResults.length + ' 个零件。';
     resultPanel.style.display = '';
     
   } catch (err) {
@@ -2153,7 +2228,8 @@ function updateOCR(index, field, value) {
 function clearOCR() {
   ocrResults = [];
   ocrSourceImage = null;
-  ocrSelection = null;
+  ocrSelections = [];
+  ocrCurrentSelection = null;
   document.getElementById('ocrResultPanel').style.display = 'none';
   document.getElementById('ocrFallbackPanel').style.display = 'none';
   document.getElementById('ocrSelectionArea').style.display = 'none';
@@ -2172,7 +2248,8 @@ function clearOCRPreview() {
   if (input) input.value = '';
   lastOcrFile = null;
   ocrSourceImage = null;
-  ocrSelection = null;
+  ocrSelections = [];
+  ocrCurrentSelection = null;
   document.getElementById('ocrSelectionArea').style.display = 'none';
 }
 
