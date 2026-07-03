@@ -1288,14 +1288,15 @@ async function processOCRFile(file) {
       progressEl.textContent = '⏳ 正在调用百度OCR识别文字...';
       try {
         const base64 = await fileToBase64FromUrl(imageUrl);
+        console.log('Image base64 length:', base64.length);
         const wordsResult = await callBaiduOCR(base64);
 
+        console.log('Baidu OCR returned:', wordsResult ? wordsResult.length + ' items' : 'null/undefined', wordsResult);
+
         if (!wordsResult || wordsResult.length === 0) {
-          progressEl.textContent = '⚠️ 百度OCR未识别到文字。请检查图片清晰度，或直接使用预置示例。';
+          progressEl.textContent = '⚠️ 百度OCR未识别到文字（返回空结果）。可能原因：① 免费额度用完 ② 图片过大/过小 ③ 图片中无文字。请尝试上传截图而非PDF，或使用预置示例。';
           return;
         }
-
-        console.log('Baidu OCR words result:', wordsResult);
 
         // 解析BOM（根据坐标重建表格结构）
         ocrResults = parseBOMFromOCR(wordsResult);
@@ -1619,7 +1620,10 @@ async function callBaiduOCR(base64Image) {
   if (data.error_code) {
     throw new Error('百度OCR错误 ' + data.error_code + ': ' + data.error_msg);
   }
-  return data.words_result || [];
+  // 防御性过滤：只返回包含 words 和 location 的有效元素
+  const result = (data.words_result || []).filter(w => w && w.words && w.location);
+  console.log('Baidu API raw response:', data.words_result_num, 'words,', result.length, 'valid after filter');
+  return result;
 }
 
 function fileToBase64(file) {
@@ -1660,13 +1664,13 @@ function parseBOMFromOCR(wordsResult) {
   // 每个元素: {words: '文字', location: {left, top, width, height}}
   // 根据坐标聚类成行和列
 
-  const words = wordsResult.filter(w => w.words && w.location);
+  const words = wordsResult.filter(w => w && w.words && w.location);
   if (words.length === 0) return results;
 
   // Step 1: 按 y 坐标（top + height/2 中心点）聚类成行
   // 使用简单的聚类：如果两个文字块的中心 y 坐标差 < 平均高度 * 0.8，则认为在同一行
   const avgHeight = words.reduce((sum, w) => sum + w.location.height, 0) / words.length;
-  const rowThreshold = avgHeight * 0.7;
+  const rowThreshold = avgHeight * 0.7 || 20; // 兜底阈值防止 NaN
 
   // 按中心 y 排序
   const sortedByY = words.map(w => ({
