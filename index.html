@@ -471,6 +471,11 @@
       <!-- 工具栏 -->
       <div style="display:flex;gap:.4rem;align-items:center;margin-bottom:.4rem;flex-wrap:wrap;">
         <div style="font-weight:600;font-size:.85rem;">🖼️ 框选要识别的区域</div>
+        <!-- 下一个选框颜色指示 -->
+        <span id="nextColorIndicator" onclick="advanceColorPreview()" title="点击预览下一个颜色" style="cursor:pointer;display:inline-flex;align-items:center;gap:.25rem;padding:.1rem .4rem;border-radius:4px;background:#f0f4f8;border:1px solid var(--border);font-size:.72rem;font-weight:600;">
+          <span id="nextColorDot" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#2196F3;"></span>
+          <span id="nextColorLabel">下一个：蓝色</span>
+        </span>
         <span style="font-size:.72rem;color:var(--muted);margin:0 .3rem;">|</span>
         <button class="btn btn-sm" onclick="zoomIn()" title="放大" style="padding:.2rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:.8rem;">🔍 +</button>
         <button class="btn btn-sm" onclick="zoomOut()" title="缩小" style="padding:.2rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:.8rem;">🔍 −</button>
@@ -553,7 +558,11 @@
   </div>
 
   <!-- Settings -->
-  <div class="settings-bar">
+  <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.3rem;">
+    <button onclick="toggleSection('settingsBody','settingsToggle')" id="settingsToggle" style="background:none;border:none;cursor:pointer;font-size:.85rem;padding:0;width:20px;text-align:center;">▼</button>
+    <span style="font-size:.75rem;color:var(--muted);font-weight:600;">产品设置</span>
+  </div>
+  <div class="settings-bar" id="settingsBody">
     <div class="field">
       <label>产品名称</label>
       <input type="text" id="productName" value="Example Sanitary Tap" oninput="recalc()">
@@ -589,8 +598,12 @@
   </div>
 
   <!-- Product image top -->
-  <div class="product-banner">
-    <h2>产品图片 Product Image</h2>
+  <div style="display:flex;align-items:center;gap:.5rem;margin:.75rem 0 .3rem 0;">
+    <button onclick="toggleSection('productImgBody','productImgToggle')" id="productImgToggle" style="background:none;border:none;cursor:pointer;font-size:.85rem;padding:0;width:20px;text-align:center;">▼</button>
+    <span style="font-size:.75rem;color:var(--muted);font-weight:600;">产品图片</span>
+  </div>
+  <div class="product-banner" id="productImgBody">
+    <h2 style="display:none;">产品图片 Product Image</h2>
     <div class="img-drop" id="productImgDrop" onclick="document.getElementById('productImgInput').click()">
       <span class="placeholder">点击上传产品图片</span>
       <input type="file" id="productImgInput" accept="image/*" onchange="previewImg(this,'productImgDrop')">
@@ -1512,6 +1525,32 @@ function updateSelectionStatus() {
     });
     statusEl.textContent = '已选 ' + ocrSelections.length + ' 个区域：' + labels.join(' ');
   }
+  updateColorIndicator();
+}
+
+/** 更新"下一个选框颜色"指示器 */
+function updateColorIndicator() {
+  const dot = document.getElementById('nextColorDot');
+  const label = document.getElementById('nextColorLabel');
+  if (!dot || !label) return;
+  const idx = ocrSelections.length % SELECTION_COLORS.length;
+  const c = SELECTION_COLORS[idx];
+  dot.style.background = c.border;
+  label.textContent = '下一个：' + c.label;
+}
+
+/** 用户点击颜色指示器，仅预览下一个颜色（不实际改变选区） */
+function advanceColorPreview() {
+  // 不实际改变选区，只循环预览颜色
+  const currentIdx = ocrSelections.length % SELECTION_COLORS.length;
+  const previewIdx = (currentIdx + 1) % SELECTION_COLORS.length;
+  const c = SELECTION_COLORS[previewIdx];
+  const dot = document.getElementById('nextColorDot');
+  const label = document.getElementById('nextColorLabel');
+  if (dot) dot.style.background = c.border;
+  if (label) label.textContent = '预览：' + c.label;
+  // 1秒后恢复
+  setTimeout(updateColorIndicator, 800);
 }
 
 // 鼠标事件绑定
@@ -1737,6 +1776,20 @@ async function recognizeSelectedArea() {
   } catch (err) {
     console.error('OCR Recognize Error:', err);
     progressEl.textContent = '❌ 识别失败：' + (err.message || '未知错误');
+  }
+}
+
+/** 折叠/展开区域 */
+function toggleSection(bodyId, toggleId) {
+  const body = document.getElementById(bodyId);
+  const toggle = document.getElementById(toggleId);
+  if (!body || !toggle) return;
+  if (body.style.display === 'none') {
+    body.style.display = '';
+    toggle.textContent = '▼';
+  } else {
+    body.style.display = 'none';
+    toggle.textContent = '▶';
   }
 }
 
