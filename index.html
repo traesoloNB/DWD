@@ -466,6 +466,20 @@
       <input type="file" id="ocrInput" accept=".pdf,image/*" style="display:none" onchange="handleOCRUpload(this)">
     </div>
     
+    <!-- 图片预览和框选区域 -->
+    <div id="ocrSelectionArea" style="display:none;margin-top:.75rem;">
+      <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem;">
+        <div style="font-weight:600;font-size:.85rem;">🖼️ 框选要识别的区域</div>
+        <button class="btn btn-outline btn-sm" onclick="clearSelection()" id="btnClearSelection">✕ 清除选区</button>
+        <button class="btn btn-primary btn-sm" onclick="recognizeSelectedArea()" id="btnRecognizeSelected">🔍 识别选区</button>
+        <span style="font-size:.75rem;color:var(--muted);" id="selectionStatus"></span>
+      </div>
+      <div style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#f8fafc;display:inline-block;">
+        <canvas id="ocrSelectionCanvas"></canvas>
+        <div id="selectionOverlay" style="position:absolute;top:0;left:0;right:0;bottom:0;cursor:crosshair;"></div>
+      </div>
+    </div>
+    
     <!-- 百度OCR配置 -->
     <div id="baiduOcrConfig" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:.75rem 1rem;margin-top:.75rem;">
       <div onclick="toggleOcrConfig()" style="cursor:pointer;display:flex;align-items:center;gap:.5rem;">
@@ -1278,10 +1292,12 @@ function handleOCRUpload(input) {
 async function processOCRFile(file) {
   const progressEl = document.getElementById('ocrProgress');
   const resultPanel = document.getElementById('ocrResultPanel');
+  const selectionArea = document.getElementById('ocrSelectionArea');
   
   lastOcrFile = file;
   progressEl.textContent = '⏳ 正在处理文件...';
   resultPanel.style.display = 'none';
+  selectionArea.style.display = 'none';
   ocrResults = [];
 
   try {
@@ -1300,55 +1316,254 @@ async function processOCRFile(file) {
     const img = await loadImage(imageUrl);
     showOCRPreview(img);
     
+    // 显示框选界面
+    showSelectionOnCanvas(img);
+    selectionArea.style.display = 'block';
+    progressEl.textContent = '🖱️ 用鼠标在下方图片上框选出 BOM 表格区域，然后点击"🔍 识别选区"';
+    
+    // 如果已配置百度，自动展开配置
     const hasBaiduKey = localStorage.getItem('baidu_api_key') && localStorage.getItem('baidu_secret_key');
-    
     if (hasBaiduKey) {
-      // 使用百度OCR
-      progressEl.textContent = '⏳ 正在调用百度OCR识别文字...';
-      try {
-        const base64 = await fileToBase64FromUrl(imageUrl);
-        console.log('Image base64 length:', base64.length);
-        const wordsResult = await callBaiduOCR(base64);
-        console.log('Baidu OCR returned:', wordsResult ? wordsResult.length + ' items' : 'null/undefined');
-        
-        if (!wordsResult || wordsResult.length === 0) {
-          progressEl.textContent = '⚠️ 百度OCR未识别到文字。请确认图片包含 BOM 表格，或使用下方手动添加。';
-          return;
-        }
-        
-        ocrResults = parseBOMFromOCR(wordsResult);
-        
-        if (ocrResults.length === 0) {
-          // 把识别到的原文展示到兜底文本框，让用户手动修正格式
-          const rawText = wordsResult.map(w => w.words).join('\n');
-          document.getElementById('ocrFallbackText').value = rawText;
-          document.getElementById('ocrFallbackPanel').style.display = 'block';
-          progressEl.textContent = '⚠️ 已识别到 ' + wordsResult.length + ' 个文字，但未匹配到 BOM 格式。请在下方调整格式后点击"重新解析"。';
-          return;
-        }
-        
-        renderOCRResults();
-        progressEl.textContent = '✅ 百度OCR识别完成，共 ' + ocrResults.length + ' 个零件。';
-        resultPanel.style.display = '';
-        return;
-        
-      } catch (ocrErr) {
-        console.error('Baidu OCR error:', ocrErr);
-        progressEl.textContent = '❌ 百度OCR失败：' + ocrErr.message + '。请检查 API Key 配置或使用下方手动添加。';
-        return;
-      }
+      document.getElementById('ocrConfigBody').style.display = 'block';
+      document.getElementById('ocrConfigToggle').textContent = '▼';
     }
-    
-    // 未配置百度OCR
-    progressEl.textContent = 'ℹ️ 未配置百度OCR，无法自动识别文字。请点击上方"🔑 配置百度OCR"填入API Key，或使用下方"加载预置示例"/"手动添加零件"。';
-    document.getElementById('ocrFallbackPanel').style.display = 'none';
-    // 展开配置面板提示用户配置
-    document.getElementById('ocrConfigBody').style.display = 'block';
-    document.getElementById('ocrConfigToggle').textContent = '▼';
     
   } catch (err) {
     console.error('OCR Error:', err);
     progressEl.textContent = '❌ 处理失败：' + (err.message || '未知错误');
+  }
+}
+
+// ═══════════════════════════════════════════
+// 框选区域识别
+// ═══════════════════════════════════════════
+
+let ocrSourceImage = null;    // 原始图片（用于裁剪）
+let ocrSelection = null;      // {x,y,w,h} 归一化坐标 (0-1)
+let ocrIsDrawing = false;
+let ocrStartX = 0, ocrStartY = 0;
+
+function showSelectionOnCanvas(img) {
+  ocrSourceImage = img;
+  ocrSelection = null;
+  
+  const canvas = document.getElementById('ocrSelectionCanvas');
+  const container = canvas.parentElement;
+  
+  // 计算最佳显示尺寸（最大宽度 800px，高度自适应）
+  let displayW = Math.min(img.naturalWidth, 800);
+  let displayH = displayW * (img.naturalHeight / img.naturalWidth);
+  if (displayH > 500) {
+    displayH = 500;
+    displayW = displayH * (img.naturalWidth / img.naturalHeight);
+  }
+  
+  canvas.width = img.naturalWidth;   // 画布 = 原始分辨率
+  canvas.height = img.naturalHeight;
+  canvas.style.width = displayW + 'px';
+  canvas.style.height = displayH + 'px';
+  
+  // 绘制图片到 canvas
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  
+  // 设置 overlay 尺寸匹配画布显示尺寸
+  const overlay = document.getElementById('selectionOverlay');
+  overlay.style.width = displayW + 'px';
+  overlay.style.height = displayH + 'px';
+  
+  document.getElementById('selectionStatus').textContent = '拖动鼠标画出选框';
+}
+
+function getCanvasMousePos(e) {
+  const canvas = document.getElementById('ocrSelectionCanvas');
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+  const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+}
+
+function drawSelectionRect() {
+  const canvas = document.getElementById('ocrSelectionCanvas');
+  const ctx = canvas.getContext('2d');
+  const img = ocrSourceImage;
+  if (!img) return;
+  
+  // 重绘图片
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0);
+  
+  if (ocrSelection && ocrSelection.w > 5 && ocrSelection.h > 5) {
+    // 绘制选框
+    ctx.fillStyle = 'rgba(33,150,243,0.12)';
+    ctx.fillRect(ocrSelection.x, ocrSelection.y, ocrSelection.w, ocrSelection.h);
+    ctx.strokeStyle = '#2196F3';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.strokeRect(ocrSelection.x, ocrSelection.y, ocrSelection.w, ocrSelection.h);
+    
+    // 边角标记
+    const corners = [
+      [ocrSelection.x, ocrSelection.y],
+      [ocrSelection.x + ocrSelection.w, ocrSelection.y],
+      [ocrSelection.x, ocrSelection.y + ocrSelection.h],
+      [ocrSelection.x + ocrSelection.w, ocrSelection.y + ocrSelection.h]
+    ];
+    ctx.fillStyle = '#2196F3';
+    corners.forEach(([cx, cy]) => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    
+    document.getElementById('selectionStatus').textContent =
+      `已选区域：${Math.round(ocrSelection.w)}×${Math.round(ocrSelection.h)} 像素`;
+  } else {
+    document.getElementById('selectionStatus').textContent = '拖动鼠标画出选框';
+  }
+}
+
+// 鼠标事件绑定
+const selOverlay = document.getElementById('selectionOverlay');
+
+selOverlay.addEventListener('mousedown', function(e) {
+  e.preventDefault();
+  ocrIsDrawing = true;
+  const pos = getCanvasMousePos(e);
+  ocrStartX = pos.x;
+  ocrStartY = pos.y;
+  ocrSelection = null;
+});
+
+document.addEventListener('mousemove', function(e) {
+  if (!ocrIsDrawing) return;
+  const pos = getCanvasMousePos(e);
+  const x = Math.min(ocrStartX, pos.x);
+  const y = Math.min(ocrStartY, pos.y);
+  const w = Math.abs(pos.x - ocrStartX);
+  const h = Math.abs(pos.y - ocrStartY);
+  ocrSelection = { x, y, w, h };
+  drawSelectionRect();
+});
+
+document.addEventListener('mouseup', function() {
+  ocrIsDrawing = false;
+  if (ocrSelection && (ocrSelection.w < 10 || ocrSelection.h < 10)) {
+    ocrSelection = null;
+    drawSelectionRect();
+  }
+});
+
+// 触摸支持
+selOverlay.addEventListener('touchstart', function(e) {
+  e.preventDefault();
+  ocrIsDrawing = true;
+  const pos = getCanvasMousePos(e);
+  ocrStartX = pos.x;
+  ocrStartY = pos.y;
+  ocrSelection = null;
+});
+
+selOverlay.addEventListener('touchmove', function(e) {
+  e.preventDefault();
+  if (!ocrIsDrawing) return;
+  const pos = getCanvasMousePos(e);
+  const x = Math.min(ocrStartX, pos.x);
+  const y = Math.min(ocrStartY, pos.y);
+  const w = Math.abs(pos.x - ocrStartX);
+  const h = Math.abs(pos.y - ocrStartY);
+  ocrSelection = { x, y, w, h };
+  drawSelectionRect();
+});
+
+selOverlay.addEventListener('touchend', function(e) {
+  ocrIsDrawing = false;
+  if (ocrSelection && (ocrSelection.w < 10 || ocrSelection.h < 10)) {
+    ocrSelection = null;
+    drawSelectionRect();
+  }
+});
+
+function clearSelection() {
+  ocrSelection = null;
+  drawSelectionRect();
+  document.getElementById('selectionStatus').textContent = '选区已清除，重新拖动鼠标画出选框';
+}
+
+async function recognizeSelectedArea() {
+  const progressEl = document.getElementById('ocrProgress');
+  const resultPanel = document.getElementById('ocrResultPanel');
+  const fallbackPanel = document.getElementById('ocrFallbackPanel');
+  
+  if (!ocrSourceImage) {
+    progressEl.textContent = '⚠️ 没有图片数据，请重新上传。';
+    return;
+  }
+  
+  if (!ocrSelection || ocrSelection.w < 10 || ocrSelection.h < 10) {
+    progressEl.textContent = '⚠️ 请先用鼠标在图片上框选出 BOM 表格区域！';
+    return;
+  }
+  
+  const hasBaiduKey = localStorage.getItem('baidu_api_key') && localStorage.getItem('baidu_secret_key');
+  if (!hasBaiduKey) {
+    progressEl.textContent = '⚠️ 请先在上方配置百度 OCR API Key。';
+    document.getElementById('ocrConfigBody').style.display = 'block';
+    document.getElementById('ocrConfigToggle').textContent = '▼';
+    return;
+  }
+  
+  progressEl.textContent = '⏳ 正在裁剪选中区域并调用百度OCR识别...';
+  resultPanel.style.display = 'none';
+  fallbackPanel.style.display = 'none';
+  ocrResults = [];
+  
+  try {
+    // 裁剪选中区域为独立图片
+    const { x, y, w, h } = ocrSelection;
+    const canvas = document.getElementById('ocrSelectionCanvas');
+    
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = w;
+    cropCanvas.height = h;
+    const cropCtx = cropCanvas.getContext('2d');
+    cropCtx.drawImage(ocrSourceImage, x, y, w, h, 0, 0, w, h);
+    
+    const croppedBase64 = cropCanvas.toDataURL('image/jpeg', 0.95).split(',')[1];
+    console.log('Cropped region:', Math.round(w), 'x', Math.round(h), 'px, base64:', croppedBase64.length);
+    
+    // 调用百度OCR
+    const wordsResult = await callBaiduOCR(croppedBase64);
+    console.log('Baidu OCR returned:', wordsResult ? wordsResult.length + ' items' : 'empty');
+    
+    if (!wordsResult || wordsResult.length === 0) {
+      progressEl.textContent = '⚠️ 百度OCR未识别到文字。请确认框选区域包含 BOM 表格文字。';
+      return;
+    }
+    
+    // 尝试解析BOM
+    ocrResults = parseBOMFromOCR(wordsResult);
+    
+    if (ocrResults.length === 0) {
+      const rawText = wordsResult.map(w => w.words).join('\n');
+      document.getElementById('ocrFallbackText').value = rawText;
+      fallbackPanel.style.display = 'block';
+      progressEl.textContent = '⚠️ 识别到 ' + wordsResult.length + ' 个文字，但未匹配到 BOM 格式。文本框里是识别结果，调整格式后点"重新解析"。';
+      return;
+    }
+    
+    renderOCRResults();
+    progressEl.textContent = '✅ 识别完成，共 ' + ocrResults.length + ' 个零件。';
+    resultPanel.style.display = '';
+    
+  } catch (err) {
+    console.error('OCR Recognize Error:', err);
+    progressEl.textContent = '❌ 识别失败：' + (err.message || '未知错误');
   }
 }
 
@@ -1860,8 +2075,11 @@ function updateOCR(index, field, value) {
 
 function clearOCR() {
   ocrResults = [];
+  ocrSourceImage = null;
+  ocrSelection = null;
   document.getElementById('ocrResultPanel').style.display = 'none';
   document.getElementById('ocrFallbackPanel').style.display = 'none';
+  document.getElementById('ocrSelectionArea').style.display = 'none';
   document.getElementById('ocrProgress').textContent = '';
 }
 
@@ -1876,6 +2094,9 @@ function clearOCRPreview() {
   const input = document.getElementById('ocrInput');
   if (input) input.value = '';
   lastOcrFile = null;
+  ocrSourceImage = null;
+  ocrSelection = null;
+  document.getElementById('ocrSelectionArea').style.display = 'none';
 }
 
 function reRunOCR() {
