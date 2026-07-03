@@ -1290,7 +1290,7 @@ async function processOCRFile(file) {
       progressEl.textContent = '⏳ 正在解析 PDF...';
       imageUrl = await pdfToImage(file);
       if (!imageUrl) {
-        progressEl.textContent = '❌ PDF 解析失败。请切换到"📋 粘贴表格"模式，直接从 PDF 复制 BOM 表格粘贴。';
+        progressEl.textContent = '❌ PDF 解析失败。请尝试先截图 BOM 表部分再上传，或使用下方手动添加。';
         return;
       }
     } else {
@@ -1312,7 +1312,7 @@ async function processOCRFile(file) {
         console.log('Baidu OCR returned:', wordsResult ? wordsResult.length + ' items' : 'null/undefined');
         
         if (!wordsResult || wordsResult.length === 0) {
-          progressEl.textContent = '⚠️ 百度OCR未识别到文字。建议切换到"📋 粘贴表格"模式，直接从 PDF 复制 BOM 表格。';
+          progressEl.textContent = '⚠️ 百度OCR未识别到文字。请确认图片包含 BOM 表格，或使用下方手动添加。';
           return;
         }
         
@@ -1334,7 +1334,7 @@ async function processOCRFile(file) {
         
       } catch (ocrErr) {
         console.error('Baidu OCR error:', ocrErr);
-        progressEl.textContent = '❌ 百度OCR失败：' + ocrErr.message + '。建议切换到"📋 粘贴表格"模式。';
+        progressEl.textContent = '❌ 百度OCR失败：' + ocrErr.message + '。请检查 API Key 配置或使用下方手动添加。';
         return;
       }
     }
