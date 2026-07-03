@@ -1373,15 +1373,41 @@ async function pdfToImage(file) {
   try {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
-    const page = await pdf.getPage(1); // 只处理第一页
-    const scale = 2; // 高分辨率
+    const page = await pdf.getPage(1);
+    const scale = 2;
     const viewport = page.getViewport({scale});
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({canvasContext: ctx, viewport}).promise;
-    return canvas.toDataURL('image/png');
+    
+    // 裁切：BOM 表通常在右侧和下侧
+    // 裁切右侧 55% 区域的底部 85%（去掉爆炸图和顶部空白）
+    const cropW = Math.floor(canvas.width * 0.55);
+    const cropH = Math.floor(canvas.height * 0.85);
+    const cropX = Math.floor(canvas.width * 0.45);  // 从右侧 45% 开始
+    const cropY = Math.floor(canvas.height * 0.05); // 从顶部 5% 开始（跳过页眉）
+    
+    // 创建一个新的裁剪 canvas
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
+    const cropCtx = cropCanvas.getContext('2d');
+    cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+    
+    // 放大裁剪后的区域（让 BOM 表文字更大更清晰）
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = cropW * 1.5;
+    finalCanvas.height = cropH * 1.5;
+    const finalCtx = finalCanvas.getContext('2d');
+    finalCtx.imageSmoothingEnabled = true;
+    finalCtx.imageSmoothingQuality = 'high';
+    finalCtx.drawImage(cropCanvas, 0, 0, cropW, cropH, 0, 0, finalCanvas.width, finalCanvas.height);
+    
+    return finalCanvas.toDataURL('image/jpeg', 0.92);
   } catch (e) {
     console.error('PDF render error:', e);
     return null;
