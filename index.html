@@ -468,19 +468,29 @@
     
     <!-- 图片预览和框选区域 -->
     <div id="ocrSelectionArea" style="display:none;margin-top:.75rem;">
-      <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem;flex-wrap:wrap;">
+      <!-- 工具栏 -->
+      <div style="display:flex;gap:.4rem;align-items:center;margin-bottom:.4rem;flex-wrap:wrap;">
         <div style="font-weight:600;font-size:.85rem;">🖼️ 框选要识别的区域</div>
+        <span style="font-size:.72rem;color:var(--muted);margin:0 .3rem;">|</span>
+        <button class="btn btn-sm" onclick="zoomIn()" title="放大" style="padding:.2rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:.8rem;">🔍 +</button>
+        <button class="btn btn-sm" onclick="zoomOut()" title="缩小" style="padding:.2rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:.8rem;">🔍 −</button>
+        <button class="btn btn-sm" onclick="zoomFit()" title="适应窗口" style="padding:.2rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:.8rem;">⊞ 适应</button>
+        <button class="btn btn-sm" onclick="zoomReset()" title="100%" style="padding:.2rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:.8rem;">1:1</button>
+        <span style="font-size:.72rem;color:var(--muted);margin:0 .3rem;">|</span>
+        <button class="btn btn-sm" onclick="rotateImage()" title="顺时针旋转90°" style="padding:.2rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:.8rem;">🔄 旋转</button>
+        <span style="font-size:.72rem;color:var(--muted);margin:0 .3rem;">|</span>
         <button class="btn btn-outline btn-sm" onclick="clearSelection()" id="btnClearSelection">✕ 清除选区</button>
         <button class="btn btn-primary btn-sm" onclick="recognizeSelectedArea()" id="btnRecognizeSelected">🔍 识别选区</button>
         <span style="font-size:.75rem;color:var(--muted);" id="selectionStatus"></span>
       </div>
+      <!-- 图片显示区 -->
       <div style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:auto;background:#f8fafc;max-height:80vh;width:100%;box-sizing:border-box;">
-        <div id="selectionWrapper" style="position:relative;display:inline-block;">
+        <div id="selectionTransformWrapper" style="display:flex;align-items:flex-start;">
           <canvas id="ocrSelectionCanvas" style="display:block;"></canvas>
-          <div id="selectionOverlay" style="position:absolute;top:0;left:0;cursor:crosshair;"></div>
+          <div id="selectionOverlay" style="position:absolute;top:0;left:0;cursor:crosshair;z-index:2;"></div>
         </div>
       </div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem;">💡 提示：如果图片很长可以滚动滚轮。鼠标从选区左上角拖到右下角就是你要识别的区域。</div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem;">💡 框选：鼠标拖拽选中 BOM 表格区域 → 缩放/旋转让图片更清晰 → 点"识别选区"</div>
     </div>
     
     <!-- 百度OCR配置 -->
@@ -1341,50 +1351,68 @@ async function processOCRFile(file) {
 // 框选区域识别
 // ═══════════════════════════════════════════
 
-let ocrSourceImage = null;    // 原始图片（用于裁剪）
-let ocrSelection = null;      // {x,y,w,h} 归一化坐标 (0-1)
+let ocrSourceImage = null;    // 原始Image对象
+let ocrSelection = null;      // {x,y,w,h} canvas像素坐标
 let ocrIsDrawing = false;
 let ocrStartX = 0, ocrStartY = 0;
+let ocrZoom = 1.0;           // 缩放倍率
+let ocrRotation = 0;         // 旋转角度 0/90/180/270
+
+/** 在canvas上渲染当前旋转角度的图片 */
+function renderRotatedImage() {
+  const canvas = document.getElementById('ocrSelectionCanvas');
+  const ctx = canvas.getContext('2d');
+  const img = ocrSourceImage;
+  if (!img) return;
+  
+  const srcW = img.naturalWidth;
+  const srcH = img.naturalHeight;
+  
+  // 根据旋转角度决定画布尺寸
+  if (ocrRotation === 0 || ocrRotation === 180) {
+    canvas.width = srcW;
+    canvas.height = srcH;
+  } else {
+    canvas.width = srcH;
+    canvas.height = srcW;
+  }
+  
+  const angle = ocrRotation * Math.PI / 180;
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate(angle);
+  ctx.drawImage(img, -srcW / 2, -srcH / 2);
+  ctx.restore();
+}
+
+/** 应用缩放（canvas + overlay 尺寸同步） */
+function applyZoom() {
+  const canvas = document.getElementById('ocrSelectionCanvas');
+  const overlay = document.getElementById('selectionOverlay');
+  
+  const dispW = Math.round(canvas.width * ocrZoom);
+  const dispH = Math.round(canvas.height * ocrZoom);
+  
+  canvas.style.width = dispW + 'px';
+  canvas.style.height = dispH + 'px';
+  overlay.style.width = dispW + 'px';
+  overlay.style.height = dispH + 'px';
+}
 
 function showSelectionOnCanvas(img) {
   ocrSourceImage = img;
   ocrSelection = null;
+  ocrZoom = 1.0;
+  ocrRotation = 0;
   
-  const canvas = document.getElementById('ocrSelectionCanvas');
-  const overlay = document.getElementById('selectionOverlay');
-  const wrapper = document.getElementById('selectionWrapper');
+  renderRotatedImage();
   
-  // 计算显示尺寸：原始分辨率，但最小宽度 600px（太小就放大）
-  let displayW = img.naturalWidth;
-  let displayH = img.naturalHeight;
+  // 先 applyZoom 让 overlay 有尺寸，再 zoomFit 自适应
+  applyZoom();
+  zoomFit();
   
-  if (displayW < 600) {
-    const scale = 600 / displayW;
-    displayW = 600;
-    displayH = Math.round(img.naturalHeight * scale);
-  }
-  if (displayW > 1200) {
-    const scale = 1200 / displayW;
-    displayW = 1200;
-    displayH = Math.round(img.naturalHeight * scale);
-  }
-  
-  // 画布 = 原始分辨率（用于精确裁剪）
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  // CSS 显示尺寸
-  canvas.style.width = displayW + 'px';
-  canvas.style.height = displayH + 'px';
-  
-  // 绘制图片
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  
-  // overlay 尺寸匹配 canvas 显示尺寸
-  overlay.style.width = displayW + 'px';
-  overlay.style.height = displayH + 'px';
-  
-  document.getElementById('selectionStatus').textContent = '图片尺寸：' + img.naturalWidth + '×' + img.naturalHeight + '，拖动鼠标画出选框';
+  document.getElementById('selectionStatus').textContent =
+    '图片尺寸：' + img.naturalWidth + '×' + img.naturalHeight + '，拖动鼠标画出选框';
 }
 
 function getCanvasMousePos(e) {
@@ -1395,20 +1423,18 @@ function getCanvasMousePos(e) {
   const clientX = e.clientX || (e.touches && e.touches[0].clientX);
   const clientY = e.clientY || (e.touches && e.touches[0].clientY);
   return {
-    x: (clientX - rect.left) * scaleX,
-    y: (clientY - rect.top) * scaleY
+    x: Math.max(0, Math.min(canvas.width, (clientX - rect.left) * scaleX)),
+    y: Math.max(0, Math.min(canvas.height, (clientY - rect.top) * scaleY))
   };
 }
 
 function drawSelectionRect() {
   const canvas = document.getElementById('ocrSelectionCanvas');
   const ctx = canvas.getContext('2d');
-  const img = ocrSourceImage;
-  if (!img) return;
+  if (!ocrSourceImage) return;
   
-  // 重绘图片
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0);
+  // 重绘当前旋转角度的图片
+  renderRotatedImage();
   
   if (ocrSelection && ocrSelection.w > 5 && ocrSelection.h > 5) {
     // 绘制选框
@@ -1507,6 +1533,66 @@ function clearSelection() {
   document.getElementById('selectionStatus').textContent = '选区已清除，重新拖动鼠标画出选框';
 }
 
+// ── 缩放与旋转 ──
+
+function zoomIn() {
+  ocrZoom = Math.min(ocrZoom * 1.3, 5);
+  applyZoom();
+  document.getElementById('selectionStatus').textContent =
+    '缩放：' + Math.round(ocrZoom * 100) + '%';
+}
+
+function zoomOut() {
+  ocrZoom = Math.max(ocrZoom / 1.3, 0.1);
+  applyZoom();
+  document.getElementById('selectionStatus').textContent =
+    '缩放：' + Math.round(ocrZoom * 100) + '%';
+}
+
+function zoomFit() {
+  const canvas = document.getElementById('ocrSelectionCanvas');
+  const wrapper = document.getElementById('selectionTransformWrapper');
+  const container = wrapper.parentElement;
+  if (!container) return;
+  
+  // 容器可用宽高（减去滚动条和内边距）
+  const pad = 20;
+  const containerW = container.clientWidth - pad * 2;
+  const containerH = container.clientHeight - pad * 2;
+  if (containerW <= 0 || containerH <= 0) return;
+  
+  const imgW = canvas.width;
+  const imgH = canvas.height;
+  if (imgW <= 0 || imgH <= 0) return;
+  
+  const scaleX = containerW / imgW;
+  const scaleY = containerH / imgH;
+  // 取较小值确保图片完整显示，上限3倍
+  ocrZoom = Math.min(scaleX, scaleY, 3);
+  // 下限
+  if (ocrZoom < 0.05) ocrZoom = 0.05;
+  
+  applyZoom();
+  document.getElementById('selectionStatus').textContent =
+    '自适应 ' + Math.round(ocrZoom * 100) + '%';
+}
+
+function zoomReset() {
+  ocrZoom = 1.0;
+  applyZoom();
+  document.getElementById('selectionStatus').textContent = '100%';
+}
+
+function rotateImage() {
+  ocrRotation = (ocrRotation + 90) % 360;
+  ocrSelection = null; // 旋转后坐标空间变化，清空选区
+  renderRotatedImage();
+  applyZoom();
+  drawSelectionRect();
+  document.getElementById('selectionStatus').textContent =
+    '已旋转 ' + ocrRotation + '°，请重新框选区域';
+}
+
 async function recognizeSelectedArea() {
   const progressEl = document.getElementById('ocrProgress');
   const resultPanel = document.getElementById('ocrResultPanel');
@@ -1544,7 +1630,7 @@ async function recognizeSelectedArea() {
     cropCanvas.width = w;
     cropCanvas.height = h;
     const cropCtx = cropCanvas.getContext('2d');
-    cropCtx.drawImage(ocrSourceImage, x, y, w, h, 0, 0, w, h);
+    cropCtx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
     
     const croppedBase64 = cropCanvas.toDataURL('image/jpeg', 0.95).split(',')[1];
     console.log('Cropped region:', Math.round(w), 'x', Math.round(h), 'px, base64:', croppedBase64.length);
