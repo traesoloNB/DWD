@@ -468,16 +468,19 @@
     
     <!-- 图片预览和框选区域 -->
     <div id="ocrSelectionArea" style="display:none;margin-top:.75rem;">
-      <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem;">
+      <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem;flex-wrap:wrap;">
         <div style="font-weight:600;font-size:.85rem;">🖼️ 框选要识别的区域</div>
         <button class="btn btn-outline btn-sm" onclick="clearSelection()" id="btnClearSelection">✕ 清除选区</button>
         <button class="btn btn-primary btn-sm" onclick="recognizeSelectedArea()" id="btnRecognizeSelected">🔍 识别选区</button>
         <span style="font-size:.75rem;color:var(--muted);" id="selectionStatus"></span>
       </div>
-      <div style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#f8fafc;display:inline-block;">
-        <canvas id="ocrSelectionCanvas"></canvas>
-        <div id="selectionOverlay" style="position:absolute;top:0;left:0;right:0;bottom:0;cursor:crosshair;"></div>
+      <div style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:auto;background:#f8fafc;max-height:700px;display:inline-block;max-width:100%;">
+        <div style="position:relative;display:inline-block;">
+          <canvas id="ocrSelectionCanvas"></canvas>
+          <div id="selectionOverlay" style="position:absolute;top:0;left:0;cursor:crosshair;"></div>
+        </div>
       </div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem;">💡 提示：如果图片很长可以滚动滚轮。鼠标从选区左上角拖到右下角就是你要识别的区域。</div>
     </div>
     
     <!-- 百度OCR配置 -->
@@ -1348,22 +1351,18 @@ function showSelectionOnCanvas(img) {
   ocrSelection = null;
   
   const canvas = document.getElementById('ocrSelectionCanvas');
-  const container = canvas.parentElement;
   
-  // 计算最佳显示尺寸（最大宽度 800px，高度自适应）
-  let displayW = Math.min(img.naturalWidth, 800);
+  // 计算最佳显示尺寸：宽度最大 900px，高度不限（支持滚动）
+  let displayW = Math.min(img.naturalWidth, 900);
   let displayH = displayW * (img.naturalHeight / img.naturalWidth);
-  if (displayH > 500) {
-    displayH = 500;
-    displayW = displayH * (img.naturalWidth / img.naturalHeight);
-  }
   
-  canvas.width = img.naturalWidth;   // 画布 = 原始分辨率
+  // 画布用原始分辨率
+  canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   canvas.style.width = displayW + 'px';
   canvas.style.height = displayH + 'px';
   
-  // 绘制图片到 canvas
+  // 绘制图片
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0);
   
