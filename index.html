@@ -456,34 +456,66 @@
 <main>
   <!-- OCR Upload Panel -->
   <div class="ocr-panel">
-    <div class="panel-title">🤖 爆炸图智能识别 <span>上传 PDF 或图片，自动提取 BOM 数据</span></div>
-    <div class="ocr-drop" id="ocrDrop" onclick="document.getElementById('ocrInput').click()">
-      <div style="font-size:1.5rem;margin-bottom:.3rem">📄</div>
-      <div style="font-weight:600;color:var(--accent)">点击上传爆炸图 或 拖拽到此处</div>
-      <div style="font-size:.78rem;color:var(--muted);margin-top:.3rem">支持 PDF、PNG、JPG · 自动识别 BOM 表格</div>
-      <input type="file" id="ocrInput" accept=".pdf,image/*" style="display:none" onchange="handleOCRUpload(this)">
-      <div style="margin-top:.5rem">
-        <button class="btn btn-outline btn-sm" onclick="loadOcrDemo()">📖 加载预置示例</button>
-        <span style="font-size:.75rem;color:var(--muted);margin-left:.3rem">无需上传，直接试用识别功能</span>
+    <div class="panel-title">🤖 爆炸图智能识别 <span>自动提取 BOM 数据</span></div>
+    
+    <!-- 模式切换标签 -->
+    <div class="ocr-tabs" style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:1rem;">
+      <button class="ocr-tab active" onclick="switchOcrTab('paste')" id="tabPaste" style="padding:.5rem 1.2rem;border:none;background:transparent;border-bottom:2px solid var(--accent);color:var(--accent);font-weight:600;cursor:pointer;">📋 粘贴表格</button>
+      <button class="ocr-tab" onclick="switchOcrTab('upload')" id="tabUpload" style="padding:.5rem 1.2rem;border:none;background:transparent;border-bottom:2px solid transparent;color:var(--muted);font-weight:500;cursor:pointer;">📤 上传图片</button>
+      <button class="ocr-tab" onclick="switchOcrTab('manual')" id="tabManual" style="padding:.5rem 1.2rem;border:none;background:transparent;border-bottom:2px solid transparent;color:var(--muted);font-weight:500;cursor:pointer;">✏️ 手动输入</button>
+    </div>
+    
+    <!-- 粘贴模式（默认） -->
+    <div id="ocrPasteMode" style="display:block;">
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:1rem;margin-bottom:.75rem;">
+        <div style="font-weight:600;font-size:.85rem;color:var(--text);margin-bottom:.5rem;">📋 从 PDF 复制 BOM 表格粘贴</div>
+        <div style="font-size:.75rem;color:var(--muted);margin-bottom:.5rem;line-height:1.5;">
+          ① 打开 PDF 爆炸图 → ② 选中 BOM 表格区域 → ③ 复制（Ctrl+C）→ ④ 粘贴到下方文本框 → ⑤ 点击"解析表格"
+        </div>
+        <textarea id="ocrPasteInput" placeholder="粘贴从 PDF 复制的 BOM 表格内容...&#10;例如：&#10;1  出水管  1  铜&#10;2  胶垫  2  橡胶&#10;..." style="width:100%;min-height:120px;padding:.6rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem;font-family:monospace;resize:vertical;box-sizing:border-box;"></textarea>
+        <div style="display:flex;gap:.5rem;margin-top:.5rem;align-items:center;">
+          <button class="btn btn-primary btn-sm" onclick="parsePastedTable()">🔍 解析表格</button>
+          <button class="btn btn-outline btn-sm" onclick="document.getElementById('ocrPasteInput').value=''">清空</button>
+          <span style="font-size:.75rem;color:var(--muted);">支持 Excel/Word/PDF 复制的表格文本</span>
+        </div>
       </div>
     </div>
-    <!-- 百度OCR API配置 -->
-    <div id="baiduOcrConfig" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:.75rem 1rem;margin-top:.75rem;">
-      <div style="font-weight:600;font-size:.85rem;color:var(--text);margin-bottom:.4rem;">
-        🔑 百度智能云 OCR 配置（可选）
-        <span style="font-weight:normal;font-size:.75rem;color:var(--muted);">— 配置后可自动识别图片中的文字</span>
+    
+    <!-- 上传模式 -->
+    <div id="ocrUploadMode" style="display:none;">
+      <div class="ocr-drop" id="ocrDrop" onclick="document.getElementById('ocrInput').click()">
+        <div style="font-size:1.5rem;margin-bottom:.3rem">📄</div>
+        <div style="font-weight:600;color:var(--accent)">点击上传爆炸图 或 拖拽到此处</div>
+        <div style="font-size:.78rem;color:var(--muted);margin-top:.3rem">支持 PDF、PNG、JPG</div>
+        <input type="file" id="ocrInput" accept=".pdf,image/*" style="display:none" onchange="handleOCRUpload(this)">
       </div>
-      <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
-        <input type="text" id="baiduApiKey" placeholder="API Key" style="flex:1;min-width:140px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveBaiduConfig()">
-        <input type="password" id="baiduSecretKey" placeholder="Secret Key" style="flex:1;min-width:140px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveBaiduConfig()">
-        <button class="btn btn-outline btn-sm" onclick="testBaiduOcr()" id="btnTestBaidu" style="font-size:.75rem;">⚡ 测试连接</button>
-      </div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:.35rem;">
-        免费额度 500次/天，超出后约 0.009元/次。
-        <a href="https://console.bce.baidu.com/ai/?_=ai/ocr/overview/index" target="_blank" style="color:var(--accent);">去百度智能云申请 →</a>
-        <span id="baiduConfigStatus" style="margin-left:.5rem;"></span>
+      <!-- 百度OCR配置（可选） -->
+      <div id="baiduOcrConfig" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:.75rem 1rem;margin-top:.75rem;">
+        <div style="font-weight:600;font-size:.85rem;color:var(--text);margin-bottom:.4rem;">
+          🔑 百度智能云 OCR 配置（可选）
+          <span style="font-weight:normal;font-size:.75rem;color:var(--muted);">— 配置后可自动识别图片中的文字</span>
+        </div>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="baiduApiKey" placeholder="API Key" style="flex:1;min-width:140px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveBaiduConfig()">
+          <input type="password" id="baiduSecretKey" placeholder="Secret Key" style="flex:1;min-width:140px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveBaiduConfig()">
+          <button class="btn btn-outline btn-sm" onclick="testBaiduOcr()" id="btnTestBaidu" style="font-size:.75rem;">⚡ 测试连接</button>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:.35rem;">
+          免费额度 500次/天，超出后约 0.009元/次。
+          <a href="https://console.bce.baidu.com/ai/?_=ai/ocr/overview/index" target="_blank" style="color:var(--accent);">去百度智能云申请 →</a>
+          <span id="baiduConfigStatus" style="margin-left:.5rem;"></span>
+        </div>
       </div>
     </div>
+    
+    <!-- 手动模式 -->
+    <div id="ocrManualMode" style="display:none;">
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem;">
+        <button class="btn btn-outline btn-sm" onclick="loadOcrDemo()">📖 加载台盆龙头示例</button>
+        <button class="btn btn-outline btn-sm" onclick="addOcrRow()">➕ 添加一行</button>
+      </div>
+    </div>
+    
     <div class="ocr-progress" id="ocrProgress"></div>
     <div id="ocrResultPanel" style="display:none">
       <div class="ocr-result-panel">
@@ -1256,7 +1288,7 @@ async function processOCRFile(file) {
   const progressEl = document.getElementById('ocrProgress');
   const resultPanel = document.getElementById('ocrResultPanel');
   
-  lastOcrFile = file; // 记录文件，方便重新识别
+  lastOcrFile = file;
   progressEl.textContent = '⏳ 正在处理文件...';
   resultPanel.style.display = 'none';
   ocrResults = [];
@@ -1267,78 +1299,56 @@ async function processOCRFile(file) {
       progressEl.textContent = '⏳ 正在解析 PDF...';
       imageUrl = await pdfToImage(file);
       if (!imageUrl) {
-        progressEl.textContent = '❌ PDF 解析失败，请将 PDF 转为图片后上传。';
+        progressEl.textContent = '❌ PDF 解析失败。请切换到"📋 粘贴表格"模式，直接从 PDF 复制 BOM 表格粘贴。';
         return;
       }
-      progressEl.textContent = '⏳ PDF 已转为图片，正在解析 BOM 区域...';
     } else {
       imageUrl = URL.createObjectURL(file);
     }
     
-    // 加载图片
     const img = await loadImage(imageUrl);
-    // 在页面上显示预览
     showOCRPreview(img);
     
-    // 检查是否配置了百度OCR
     const hasBaiduKey = localStorage.getItem('baidu_api_key') && localStorage.getItem('baidu_secret_key');
     
     if (hasBaiduKey) {
-      // 使用百度OCR高精度文字识别（带坐标，有免费额度）
+      // 使用百度OCR
       progressEl.textContent = '⏳ 正在调用百度OCR识别文字...';
       try {
         const base64 = await fileToBase64FromUrl(imageUrl);
         console.log('Image base64 length:', base64.length);
         const wordsResult = await callBaiduOCR(base64);
-
-        console.log('Baidu OCR returned:', wordsResult ? wordsResult.length + ' items' : 'null/undefined', wordsResult);
-
+        console.log('Baidu OCR returned:', wordsResult ? wordsResult.length + ' items' : 'null/undefined');
+        
         if (!wordsResult || wordsResult.length === 0) {
-          progressEl.textContent = '⚠️ 百度OCR未识别到文字（返回空结果）。可能原因：① 免费额度用完 ② 图片过大/过小 ③ 图片中无文字。请尝试上传截图而非PDF，或使用预置示例。';
+          progressEl.textContent = '⚠️ 百度OCR未识别到文字。建议切换到"📋 粘贴表格"模式，直接从 PDF 复制 BOM 表格。';
           return;
         }
-
-        // 解析BOM（根据坐标重建表格结构）
+        
         ocrResults = parseBOMFromOCR(wordsResult);
-
+        
         if (ocrResults.length === 0) {
-          // 未能匹配到BOM格式，显示原始文字供参考
-          const rawText = wordsResult.map(w => w.words).join(' ');
           ocrResults = [{no:1, code:'', name:'', material:'', qty:1, area:'', pct:'', type:'organic', conf:'low'}];
           renderOCRResults();
-          progressEl.textContent = '⚠️ 已识别到 ' + wordsResult.length + ' 个文字块，但未匹配到标准BOM格式。请手动填写或修正。';
+          progressEl.textContent = '⚠️ 已识别到文字，但未匹配到标准BOM格式。请切换到"📋 粘贴表格"模式手动粘贴。';
           resultPanel.style.display = '';
           return;
         }
-
+        
         renderOCRResults();
-        progressEl.textContent = '✅ 百度OCR识别完成，共 ' + ocrResults.length + ' 个零件。请检查并修正数据后点击"确认并填充到 BOM"。';
+        progressEl.textContent = '✅ 百度OCR识别完成，共 ' + ocrResults.length + ' 个零件。';
         resultPanel.style.display = '';
         return;
-
+        
       } catch (ocrErr) {
         console.error('Baidu OCR error:', ocrErr);
-        progressEl.textContent = '❌ 百度OCR识别失败：' + ocrErr.message + '。请检查API Key配置，或使用预置示例。';
+        progressEl.textContent = '❌ 百度OCR失败：' + ocrErr.message + '。建议切换到"📋 粘贴表格"模式。';
         return;
       }
     }
     
-    // 未配置百度OCR，使用本地分析（仅检测是否有表格区域）
-    progressEl.textContent = '⏳ 正在分析图片中的 BOM 表格区域...';
-    ocrResults = extractBOMFromImage(img);
-    
-    if (ocrResults.length === 0) {
-      // 如果没有自动检测到表格，提供手动添加模式
-      ocrResults = [{no:1, code:'', name:'零件名称', material:'材料', qty:1, area:'', pct:'', type:'organic', conf:'low'}];
-      renderOCRResults();
-      progressEl.textContent = 'ℹ️ 未配置百度OCR（可选），无法自动识别文字。已提供手动输入模板，请根据爆炸图手动填写零件信息，然后点击"确认并填充到 BOM"。';
-      resultPanel.style.display = '';
-      return;
-    }
-    
-    renderOCRResults();
-    progressEl.textContent = '✅ 检测到 BOM 表格结构，共 ' + ocrResults.length + ' 行。请检查并修正数据后点击"确认并填充到 BOM"。';
-    resultPanel.style.display = '';
+    // 未配置百度OCR
+    progressEl.textContent = 'ℹ️ 未配置百度OCR。请切换到"📋 粘贴表格"模式，直接从 PDF/图片复制 BOM 表格粘贴，或点击"✏️ 手动输入"逐行添加。';
     
   } catch (err) {
     console.error('OCR Error:', err);
@@ -1865,6 +1875,131 @@ function applyOCRToBOM() {
   
   recalc();
   document.getElementById('ocrProgress').textContent = `✅ 已填充 ${ocrResults.length} 个零件到 BOM 表`;
+}
+
+function switchOcrTab(mode) {
+  document.querySelectorAll('.ocr-tab').forEach(t => {
+    t.style.borderBottomColor = 'transparent';
+    t.style.color = 'var(--muted)';
+    t.style.fontWeight = '500';
+    t.classList.remove('active');
+  });
+  document.getElementById('ocrPasteMode').style.display = 'none';
+  document.getElementById('ocrUploadMode').style.display = 'none';
+  document.getElementById('ocrManualMode').style.display = 'none';
+  
+  if (mode === 'paste') {
+    document.getElementById('tabPaste').style.borderBottomColor = 'var(--accent)';
+    document.getElementById('tabPaste').style.color = 'var(--accent)';
+    document.getElementById('tabPaste').style.fontWeight = '600';
+    document.getElementById('tabPaste').classList.add('active');
+    document.getElementById('ocrPasteMode').style.display = 'block';
+  } else if (mode === 'upload') {
+    document.getElementById('tabUpload').style.borderBottomColor = 'var(--accent)';
+    document.getElementById('tabUpload').style.color = 'var(--accent)';
+    document.getElementById('tabUpload').style.fontWeight = '600';
+    document.getElementById('tabUpload').classList.add('active');
+    document.getElementById('ocrUploadMode').style.display = 'block';
+  } else {
+    document.getElementById('tabManual').style.borderBottomColor = 'var(--accent)';
+    document.getElementById('tabManual').style.color = 'var(--accent)';
+    document.getElementById('tabManual').style.fontWeight = '600';
+    document.getElementById('tabManual').classList.add('active');
+    document.getElementById('ocrManualMode').style.display = 'block';
+  }
+}
+
+function parsePastedTable() {
+  const input = document.getElementById('ocrPasteInput').value.trim();
+  const progressEl = document.getElementById('ocrProgress');
+  const resultPanel = document.getElementById('ocrResultPanel');
+  
+  if (!input) {
+    progressEl.textContent = '⚠️ 请先粘贴 BOM 表格内容。';
+    return;
+  }
+  
+  progressEl.textContent = '⏳ 正在解析...';
+  ocrResults = [];
+  
+  try {
+    ocrResults = parseBOMFromText(input);
+    
+    if (ocrResults.length === 0) {
+      progressEl.textContent = '⚠️ 未能解析出 BOM 数据。请确保粘贴的内容包含序号、名称、数量、材料等列。';
+      return;
+    }
+    
+    renderOCRResults();
+    progressEl.textContent = '✅ 解析完成，共 ' + ocrResults.length + ' 个零件。请检查并修正数据后点击"确认并填充到 BOM"。';
+    resultPanel.style.display = '';
+    
+  } catch (err) {
+    console.error(err);
+    progressEl.textContent = '❌ 解析失败：' + err.message;
+  }
+}
+
+function parseBOMFromText(text) {
+  const results = [];
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+  
+  // 尝试多种解析策略
+  
+  // 策略1: 空格/制表符分隔的表格（最常见）
+  for (const line of lines) {
+    // 跳过表头行
+    if (/^(序号|编号|NO|名称|零件|材料|规格|数量|备注)/i.test(line)) continue;
+    
+    // 按制表符或多个空格分割
+    const parts = line.split(/\t+|\s{2,}/).filter(p => p.trim());
+    if (parts.length < 2) continue;
+    
+    // 尝试匹配: 序号 名称 数量 材料
+    const no = parseInt(parts[0]);
+    if (isNaN(no) || no <= 0) continue;
+    
+    // 根据列数判断格式
+    if (parts.length >= 4) {
+      // 格式: 序号 名称 数量 材料
+      const qty = parseInt(parts[parts.length - 2]) || 1;
+      const mat = parts[parts.length - 1];
+      const name = parts.slice(1, parts.length - 2).join(' ');
+      results.push({ no, code:'', name: name.trim(), material: mat.trim(), qty, area:'', pct:0, type: guessMaterialType(mat), conf:'high' });
+    } else if (parts.length === 3) {
+      // 格式: 序号 名称 数量(材料在名称里或省略)
+      const name = parts[1];
+      const qty = parseInt(parts[2]) || 1;
+      results.push({ no, code:'', name: name.trim(), material: '', qty, area:'', pct:0, type:'organic', conf:'med' });
+    }
+  }
+  
+  // 策略2: 如果策略1失败，尝试更宽松的匹配
+  if (results.length === 0) {
+    for (const line of lines) {
+      if (/^(序号|编号|NO|名称|零件)/i.test(line)) continue;
+      // 匹配 "数字 文字 数字 文字" 的模式
+      const m = line.match(/^(\d+)\s+(.+?)\s+(\d+)(?:\s+(.+))?$/);
+      if (m) {
+        const [, noStr, name, qtyStr, mat] = m;
+        const no = parseInt(noStr);
+        const qty = parseInt(qtyStr) || 1;
+        if (mat) {
+          results.push({ no, code:'', name: name.trim(), material: mat.trim(), qty, area:'', pct:0, type: guessMaterialType(mat), conf:'high' });
+        } else {
+          results.push({ no, code:'', name: name.trim(), material: '', qty, area:'', pct:0, type:'organic', conf:'med' });
+        }
+      }
+    }
+  }
+  
+  return results.sort((a, b) => a.no - b.no);
+}
+
+function addOcrRow() {
+  ocrResults.push({no: ocrResults.length + 1, code:'', name:'', material:'', qty:1, area:'', pct:'', type:'organic', conf:'low'});
+  renderOCRResults();
+  document.getElementById('ocrResultPanel').style.display = '';
 }
 
 /* ── BOM 锁定/解锁 ── */
