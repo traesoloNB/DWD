@@ -1720,17 +1720,25 @@ function parseBOMFromOCR(wordsResult) {
 
   const headerRow = rows[headerRowIdx];
 
-  // Step 3: 映射列名到列索引
+  // Step 3: 映射列名到列索引（使用评分机制避免"编号"误匹配到"序号"）
   const colMap = {};
+  const colScores = {}; // colIndex -> {field: score}
   for (let c = 0; c < headerRow.length; c++) {
     const header = headerRow[c].words.replace(/\s/g, '');
-    if (/序号|编号|NO\.?|No\.?|number/i.test(header)) colMap.no = c;
-    else if (/article|编码|代码|code|编号|料号|part\.?no|物料编码|图样代号/i.test(header)) colMap.code = c;
-    else if (/名称|零件|品名|product|name|description|部件|图样名称/i.test(header)) colMap.name = c;
-    else if (/数量|qty\.?|quantity|件数/i.test(header)) colMap.qty = c;
-    else if (/材料|材质|mat\.?|material/i.test(header)) colMap.mat = c;
-    else if (/规格|spec\.?|型号|specification/i.test(header)) colMap.spec = c;
-    else if (/备注|note|remark|说明/i.test(header)) colMap.remark = c;
+    colScores[c] = {};
+    if (/序号/i.test(header) && !/编号/.test(header)) colScores[c].no = 10;
+    if (/NO\.?|No\.?/i.test(header)) colScores[c].no = (colScores[c].no || 0) + 5;
+    if (/^编号$/.test(header)) colScores[c].code = 10;
+    if (/编码|代码|code|料号|part\.?no|物料编码|图样代号|article/i.test(header)) colScores[c].code = (colScores[c].code || 0) + 5;
+    if (/名称|零件|品名|product|name|description|部件|图样名称/i.test(header)) colScores[c].name = 10;
+    if (/数量|qty\.?|quantity|件数/i.test(header)) colScores[c].qty = 10;
+    if (/材料|材质|mat\.?|material/i.test(header)) colScores[c].mat = 10;
+    if (/规格|spec\.?|型号|specification/i.test(header)) colScores[c].spec = 10;
+    if (/备注|note|remark|说明/i.test(header)) colScores[c].remark = 10;
+    
+    // 取最高分作为该列的映射
+    const best = Object.entries(colScores[c]).sort((a, b) => b[1] - a[1])[0];
+    if (best) colMap[best[0]] = c;
   }
 
   // 如果没识别到列，按位置猜测
