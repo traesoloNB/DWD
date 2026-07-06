@@ -2399,7 +2399,6 @@ function parseBOMFromOCR(cells) {
 
   // 百度表格识别V2实际返回格式：
   // {row_start, row_end, col_start, col_end, word, cell_location:[...], ...}
-  // 标准化为统一格式：{row, col, words}
   const normalized = cells.map(c => {
     if (!c) return null;
     return {
@@ -2426,124 +2425,143 @@ function parseBOMFromOCR(cells) {
   
   const rows = rowKeys.map(r => rowMap[r].sort((a, b) => a.col - b.col));
 
-  console.log('Table rows:', rows.length, rows.map(r => r.map(c => c.words).join(' | ')));
+  // 打印所有行供调试
+  console.log('Table rows:', rows.length);
+  rows.forEach((row, i) => {
+    console.log('  Row[' + i + '] (row_key=' + rowKeys[i] + '):', row.map(c => c.words).join(' | '));
+  });
 
   // ═══════════════════════════════════════════════
-  // Step 1: 找表头行
+  // 策略1：找真正的表头行（通过文字内容匹配）
   // ═══════════════════════════════════════════════
   let headerIdx = -1;
-  for (let i = 0; i < Math.min(6, rows.length); i++) {
-    const rowText = rows[i].map(c => c.words).join('');
-    const hasNo = /(序号|编号|NO\.?|No\.?|序)/i.test(rowText);
-    const hasName = /(名称|零件|品名|name|部件|图样名称|物料)/i.test(rowText);
-    const hasMat = /(材料|材质|mat|material)/i.test(rowText);
-    const hasQty = /(数量|qty|quantity)/i.test(rowText);
-    if (hasNo && (hasName || hasMat || hasQty)) {
+  let colMap = {};
+  
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
+    const row = rows[i];
+    const rowText = row.map(c => c.words).join('');
+    const joinedNoSpace = rowText.replace(/\s/g, '');
+    
+    // 表头必须同时包含多个BOM关键词
+    const keywords = ['序号', '编号', '品号', '名称', '品名', '数量', '材料', '材质', '规格', '备注', 'No', 'Part', 'Material', 'Qty'];
+    const matched = keywords.filter(kw => joinedNoSpace.includes(kw));
+    
+    if (matched.length >= 3) {
       headerIdx = i;
+      console.log('Header found at row', i, 'with keywords:', matched);
+      break;
+    }
+    if (matched.length >= 2 && /序号|编号|品号|No/.test(joinedNoSpace)) {
+      headerIdx = i;
+      console.log('Header found at row', i, 'with keywords:', matched);
       break;
     }
   }
-  if (headerIdx === -1) {
-    for (let i = 0; i < Math.min(6, rows.length); i++) {
-      const rowText = rows[i].map(c => c.words).join('');
-      if (/(材料|材质|数量|qty|品名)/i.test(rowText)) {
-        headerIdx = i;
-        break;
-      }
+  
+  // 如果找到表头，用表头文字映射列
+  if (headerIdx >= 0) {
+    const headerRow = rows[headerIdx];
+    headerRow.forEach((cell, idx) => {
+      const h = cell.words.replace(/\s/g, '');
+      if (/序号|序|^(No|no)$|^(NO|NO)$/.test(h)) colMap.no = cell.col;
+      if (/编号|品号|代码|料号|代号|Code|Article/.test(h)) colMap.code = cell.col;
+      if (/名称|品名|零件|部件|Name|Part|Description/.test(h)) colMap.name = cell.col;
+      if (/数量|件数|Qty|Quantity/.test(h)) colMap.qty = cell.col;
+      if (/材料|材质|Mat|Material/.test(h)) colMap.mat = cell.col;
+      if (/规格|型号|Spec|specification/.test(h)) colMap.spec = cell.col;
+      if (/备注|说明|Note|Remark/.test(h)) colMap.remark = cell.col;
+    });
+    console.log('Column mapping from header:', colMap);
+  }
+  
+  // ═══════════════════════════════════════════════
+  // 策略2：如果没找到表头，用列位置推断
+  // 标准BOM表列顺序：序号 | 品号 | 品名 | 数量 | 材料 | 规格 | 备注
+  // ═══════════════════════════════════════════════
+  if (Object.keys(colMap).length < 2) {
+    // 找到最大列数
+    const maxCols = Math.max(...rows.map(r => r.length));
+    console.log('No header found, using position inference. Max columns:', maxCols);
+    
+    if (maxCols >= 6) {
+      colMap = { no: 0, code: 1, name: 2, qty: 3, mat: 4, spec: 5 };
+    } else if (maxCols >= 5) {
+      colMap = { no: 0, code: 1, name: 2, qty: 3, mat: 4 };
+    } else if (maxCols >= 4) {
+      colMap = { no: 0, name: 1, qty: 2, mat: 3 };
+    } else if (maxCols >= 3) {
+      colMap = { no: 0, name: 1, mat: 2 };
+    } else {
+      colMap = { no: 0, name: 1 };
     }
-  }
-  if (headerIdx === -1) headerIdx = 0;
-
-  const headerRow = rows[headerIdx];
-  console.log('Header row:', headerRow.map(c => c.words).join(' | '));
-
-  // ═══════════════════════════════════════════════
-  // Step 2: 列映射（评分制）
-  // ═══════════════════════════════════════════════
-  const colMap = {};
-  const colScores = {};
-  for (let c = 0; c < headerRow.length; c++) {
-    const h = headerRow[c].words.replace(/\s/g, '');
-    colScores[c] = {};
-
-    if (/^序号$/.test(h)) colScores[c].no = 15;
-    else if (/序号/.test(h)) colScores[c].no = 10;
-    if (/NO\.?|No\.?|^序$/.test(h)) colScores[c].no = (colScores[c].no || 0) + 5;
-
-    if (/^编号$/.test(h)) colScores[c].code = 15;
-    else if (/编号|编码|代码|料号|图样代号/i.test(h)) colScores[c].code = 10;
-    if (/code|article|part\.?no/i.test(h)) colScores[c].code = (colScores[c].code || 0) + 5;
-
-    if (/名称|零件|品名|部件|图样名称/i.test(h)) colScores[c].name = 10;
-    if (/product|name|description/i.test(h)) colScores[c].name = (colScores[c].name || 0) + 5;
-
-    if (/数量|qty\.?|quantity|件数/i.test(h)) colScores[c].qty = 10;
-
-    if (/材料|材质|mat\.?|material/i.test(h)) colScores[c].mat = 10;
-
-    if (/规格|spec\.?|型号|specification/i.test(h)) colScores[c].spec = 10;
-
-    if (/备注|note|remark|说明/i.test(h)) colScores[c].remark = 10;
-
-    const best = Object.entries(colScores[c]).sort((a, b) => b[1] - a[1])[0];
-    if (best && best[1] >= 5) colMap[best[0]] = c;
+    console.log('Position-based column mapping:', colMap);
+    headerIdx = -1; // 没有表头，从第0行开始解析
   }
 
-  if (Object.keys(colMap).length === 0) {
-    colMap.no = 0;
-    colMap.code = headerRow.length > 4 ? 1 : -1;
-    colMap.name = headerRow.length > 4 ? 2 : 1;
-    colMap.qty = headerRow.length > 5 ? 3 : 2;
-    colMap.mat = headerRow.length > 6 ? 4 : 3;
-  }
-
-  console.log('Column mapping:', colMap);
-
   // ═══════════════════════════════════════════════
-  // Step 3: 解析数据行（按 col 索引直接取，不用坐标猜）
+  // 解析数据行
   // ═══════════════════════════════════════════════
-  for (let i = headerIdx + 1; i < rows.length; i++) {
+  const startRow = headerIdx >= 0 ? headerIdx + 1 : 0;
+  
+  for (let i = startRow; i < rows.length; i++) {
     const row = rows[i];
-
-    // 补齐缺失列（表格可能有合并单元格）
-    const maxCol = Math.max(...row.map(c => c.col));
+    
+    // 补齐缺失列
+    const maxCol = Math.max(...row.map(c => c.col), 0);
     const filled = new Array(maxCol + 1).fill(null);
-    row.forEach(c => filled[c.col] = c);
+    row.forEach(c => { if (c.col < filled.length) filled[c.col] = c; });
 
-    const rowText = filled.map(c => c ? c.words : '').join('');
+    const rowText = filled.map(c => c ? c.words : '').join('').trim();
     if (rowText.length === 0) continue;
-    if (/^(序号|编号|名称|材料|数量|规格|备注)+$/.test(rowText.replace(/\s/g, ''))) continue;
+    
+    // 跳过表头重复行
+    const noSpace = rowText.replace(/\s/g, '');
+    if (/^(序号|编号|品号|名称|品名|数量|材料|材质|规格|备注){2,}$/.test(noSpace)) continue;
 
-    const getCell = (colIdx) => {
-      if (colIdx === undefined || colIdx < 0 || colIdx >= filled.length) return '';
+    const getCell = (field) => {
+      const colIdx = colMap[field];
+      if (colIdx === undefined || colIdx < 0) return '';
+      if (colIdx >= filled.length) return '';
       const cell = filled[colIdx];
       return cell ? cell.words.trim() : '';
     };
 
-    // 取序号
-    let noVal = getCell(colMap.no);
-    const noMatch = noVal.match(/^(\d+)[\.、\s)）]*$/);
-    let no = noMatch ? parseInt(noMatch[1]) : parseInt(noVal);
-
+    // 解析序号
+    let noVal = getCell('no');
+    let no = parseInt(noVal);
+    
+    // 序号可能是 "4." "4、" 等格式
+    if (isNaN(no) || no <= 0) {
+      const m = noVal.match(/(\d+)/);
+      no = m ? parseInt(m[1]) : NaN;
+    }
+    
+    // 如果序号列不是纯数字，扫描整行找第一个纯数字
     if (isNaN(no) || no <= 0 || no > 999) {
       for (let j = 0; j < filled.length; j++) {
-        const t = getCell(j);
-        const m = t.match(/^(\d{1,3})$/);
-        if (m) { no = parseInt(m[1]); break; }
+        const t = filled[j] ? filled[j].words.trim() : '';
+        if (/^\d{1,3}$/.test(t)) {
+          no = parseInt(t);
+          break;
+        }
       }
     }
+    
+    // 如果还是没序号，用行号递增
     if (isNaN(no) || no <= 0) no = results.length + 1;
 
-    const code = getCell(colMap.code);
-    const name = getCell(colMap.name);
-    const qty = parseInt(getCell(colMap.qty)) || 1;
-    const mat = getCell(colMap.mat);
-    const spec = getCell(colMap.spec);
+    const code = getCell('code');
+    const name = getCell('name');
+    const qtyVal = getCell('qty');
+    const qty = parseInt(qtyVal) || (qtyVal.match(/\d+/) ? parseInt(qtyVal.match(/\d+/)[0]) : 1);
+    const mat = getCell('mat');
+    const spec = getCell('spec');
 
+    // 至少要有名称或材料
     if (!name && !mat && !code && !spec) continue;
 
-    const combined = (code + name + mat).replace(/\s/g, '');
-    if (/^(序号|编号|名称|材料|数量)$/.test(combined)) continue;
+    // 跳过明显是表头的行
+    if (/^(序号|编号|品号|名称|品名|材料|材质|数量)$/.test((code + name + mat).replace(/\s/g, ''))) continue;
 
     results.push({
       no, code, name, material: mat, qty, spec,
@@ -2553,6 +2571,7 @@ function parseBOMFromOCR(cells) {
     });
   }
 
+  // 去重排序
   const seen = new Set();
   return results.filter(r => {
     if (seen.has(r.no)) return false;
