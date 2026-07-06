@@ -1727,7 +1727,8 @@ async function recognizeSelectedArea() {
   
   try {
     const canvas = document.getElementById('ocrSelectionCanvas');
-    let allWordsResult = [];
+    const seenNos = new Set();
+    let allRawText = [];
     
     for (let i = 0; i < ocrSelections.length; i++) {
       const sel = ocrSelections[i];
@@ -1749,26 +1750,32 @@ async function recognizeSelectedArea() {
       console.log('选区 #' + (i + 1) + ' OCR 返回:', wordsResult ? wordsResult.length + ' items' : 'empty');
       
       if (wordsResult && wordsResult.length > 0) {
-        allWordsResult = allWordsResult.concat(wordsResult);
+        // 关键改动：每个选区独立解析BOM，再合并去重
+        // 这避免了不同选区的坐标空间混在一起导致行聚类混乱
+        const parsed = parseBOMFromOCR(wordsResult);
+        parsed.forEach(r => {
+          if (!seenNos.has(r.no)) {
+            ocrResults.push(r);
+            seenNos.add(r.no);
+          }
+        });
+        allRawText = allRawText.concat(wordsResult.map(w => w.words));
       }
     }
     
-    if (allWordsResult.length === 0) {
-      progressEl.textContent = '⚠️ 所有选区的百度OCR均未识别到文字。请确认框选区域包含 BOM 表格文字。';
-      return;
-    }
-    
-    // 合并所有选区的结果解析BOM
-    ocrResults = parseBOMFromOCR(allWordsResult);
-    
     if (ocrResults.length === 0) {
-      const rawText = allWordsResult.map(w => w.words).join('\n');
-      document.getElementById('ocrFallbackText').value = rawText;
-      fallbackPanel.style.display = 'block';
-      progressEl.textContent = '⚠️ 共识别到 ' + allWordsResult.length + ' 个文字（来自 ' + ocrSelections.length + ' 个选区），但未匹配到 BOM 格式。文本框里是识别结果，调整格式后点"重新解析"。';
+      if (allRawText.length > 0) {
+        document.getElementById('ocrFallbackText').value = allRawText.join('\n');
+        fallbackPanel.style.display = 'block';
+        progressEl.textContent = '⚠️ 共识别到 ' + allRawText.length + ' 个文字（来自 ' + ocrSelections.length + ' 个选区），但未匹配到 BOM 格式。文本框里是识别结果，调整格式后点"重新解析"。';
+      } else {
+        progressEl.textContent = '⚠️ 所有选区的百度OCR均未识别到文字。请确认框选区域包含 BOM 表格文字。';
+      }
       return;
     }
     
+    // 按序号排序
+    ocrResults.sort((a, b) => a.no - b.no);
     renderOCRResults();
     progressEl.textContent = '✅ 识别完成（' + ocrSelections.length + ' 个选区），共 ' + ocrResults.length + ' 个零件。';
     resultPanel.style.display = '';
