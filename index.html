@@ -1333,25 +1333,57 @@ async function processOCRFile(file) {
   ocrResults = [];
 
   try {
-    let imageUrl;
+    // ═══════════════════════════════════════════════
+    // 第一步：如果是PDF，先尝试直接提取文本层（比OCR可靠100倍）
+    // ═══════════════════════════════════════════════
     if (file.type === 'application/pdf') {
-      progressEl.textContent = '⏳ 正在解析 PDF...';
-      imageUrl = await pdfToImage(file);
+      progressEl.textContent = '⏳ 正在从PDF提取文本...';
+      const pdfText = await extractPDFText(file);
+      
+      if (pdfText && pdfText.trim().length > 50) {
+        // PDF有文本层！直接解析，不需要OCR
+        console.log('PDF text extracted:', pdfText.substring(0, 500));
+        progressEl.textContent = '⏳ PDF包含文本，正在解析BOM...';
+        
+        ocrResults = parseBOMFromPDFText(pdfText);
+        
+        if (ocrResults.length > 0) {
+          renderOCRResults();
+          progressEl.textContent = '✅ 直接从PDF提取 ' + ocrResults.length + ' 个零件（无需OCR）';
+          resultPanel.style.display = '';
+          // 仍然显示图片供用户确认
+          const imageUrl = await pdfToImage(file);
+          if (imageUrl) {
+            const img = await loadImage(imageUrl);
+            showOCRPreview(img);
+            showSelectionOnCanvas(img);
+            selectionArea.style.display = 'block';
+          }
+          return;
+        }
+      }
+      
+      // PDF没有文本层或解析失败，回退到OCR
+      progressEl.textContent = '⏳ PDF无文本层，转为图片识别...';
+      const imageUrl = await pdfToImage(file);
       if (!imageUrl) {
-        progressEl.textContent = '❌ PDF 解析失败。请尝试先截图 BOM 表部分再上传，或使用下方手动添加。';
+        progressEl.textContent = '❌ PDF 解析失败。请尝试先截图 BOM 表部分再上传。';
         return;
       }
+      const img = await loadImage(imageUrl);
+      showOCRPreview(img);
+      showSelectionOnCanvas(img);
+      selectionArea.style.display = 'block';
+      progressEl.textContent = '🖱️ 用鼠标在下方图片上框选出 BOM 表格区域，然后点击"🔍 识别选区"';
     } else {
-      imageUrl = URL.createObjectURL(file);
+      // 图片文件，直接走OCR
+      const imageUrl = URL.createObjectURL(file);
+      const img = await loadImage(imageUrl);
+      showOCRPreview(img);
+      showSelectionOnCanvas(img);
+      selectionArea.style.display = 'block';
+      progressEl.textContent = '🖱️ 用鼠标在下方图片上框选出 BOM 表格区域，然后点击"🔍 识别选区"';
     }
-    
-    const img = await loadImage(imageUrl);
-    showOCRPreview(img);
-    
-    // 显示框选界面
-    showSelectionOnCanvas(img);
-    selectionArea.style.display = 'block';
-    progressEl.textContent = '🖱️ 用鼠标在下方图片上框选出 BOM 表格区域，然后点击"🔍 识别选区"';
     
     // 如果已配置百度，自动展开配置
     const hasBaiduKey = localStorage.getItem('baidu_api_key') && localStorage.getItem('baidu_secret_key');
@@ -1364,6 +1396,150 @@ async function processOCRFile(file) {
     console.error('OCR Error:', err);
     progressEl.textContent = '❌ 处理失败：' + (err.message || '未知错误');
   }
+}
+
+/** 从PDF直接提取文本层（不经过OCR） */
+async function extractPDFText(file) {
+  if (typeof pdfjsLib === 'undefined') return '';
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+    let fullText = '';
+    for (let i = 1; i <= Math.min(pdf.numPages, 2); i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join('\n');
+      fullText += pageText + '\n';
+    }
+    return fullText;
+  } catch (e) {
+    console.error('PDF text extraction error:', e);
+    return '';
+  }
+}
+
+/** 从PDF纯文本解析BOM（比OCR可靠得多） */
+function parseBOMFromPDFText(text) {
+  const results = [];
+  if (!text || !text.trim()) return results;
+  
+  // 按行分割
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  console.log('PDF text lines:', lines.length, lines.slice(0, 20));
+  
+  // 找表头行（包含序号+名称+材料/数量）
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(15, lines.length); i++) {
+    const line = lines[i];
+    const hasNo = /(序号|编号|NO\.?|No\.?|序|^No$)/i.test(line);
+    const hasName = /(名称|零件|品名|部件|图样名称|物料|Name|Description)/i.test(line);
+    const hasMat = /(材料|材质|Mat|Material)/i.test(line);
+    const hasQty = /(数量|Qty|Quantity|件数)/i.test(line);
+    if ((hasNo || /\bNo\b/.test(line)) && (hasName || hasMat || hasQty)) {
+      headerIdx = i;
+      break;
+    }
+  }
+  
+  // 兜底：找包含"材料"的行
+  if (headerIdx === -1) {
+    for (let i = 0; i < Math.min(15, lines.length); i++) {
+      if (/(材料|材质|Mat|Material|数量|Qty)/i.test(lines[i])) {
+        headerIdx = i;
+        break;
+      }
+    }
+  }
+  
+  if (headerIdx === -1) {
+    console.log('No header row found in PDF text');
+    return results;
+  }
+  
+  console.log('Header found at line', headerIdx, ':', lines[headerIdx]);
+  
+  // 解析表头，确定各列位置（用空格分隔）
+  const headerLine = lines[headerIdx];
+  const headerParts = headerLine.split(/\s{2,}/).map(s => s.trim()).filter(s => s);
+  
+  const colMap = {};
+  headerParts.forEach((part, idx) => {
+    const p = part.replace(/\s/g, '');
+    if (/^序号$/.test(p)) colMap.no = idx;
+    else if (/序号|序|NO\.?|No\.?|^No$/i.test(p)) colMap.no = idx;
+    else if (/^编号$/.test(p)) colMap.code = idx;
+    else if (/编号|编码|代码|料号|图样代号|Code|Article/i.test(p)) colMap.code = idx;
+    else if (/名称|零件|品名|部件|图样名称|Name|Description|Part/i.test(p)) colMap.name = idx;
+    else if (/数量|Qty|Quantity|件数/i.test(p)) colMap.qty = idx;
+    else if (/材料|材质|Mat|Material/i.test(p)) colMap.mat = idx;
+    else if (/规格|Spec|型号|Specification/i.test(p)) colMap.spec = idx;
+  });
+  
+  // 兜底映射
+  if (Object.keys(colMap).length === 0) {
+    colMap.no = 0;
+    colMap.name = headerParts.length > 2 ? 1 : -1;
+    colMap.qty = headerParts.length > 3 ? 2 : -1;
+    colMap.mat = headerParts.length > 4 ? 3 : -1;
+  }
+  
+  console.log('Column mapping from PDF text:', colMap, 'headerParts:', headerParts);
+  
+  // 解析数据行
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    
+    // 跳过页眉页脚
+    if (/^(Page|第|页|共|\d+\s*\/\s*\d+)/i.test(line)) continue;
+    
+    // 用多个空格分隔
+    const parts = line.split(/\s{2,}/).map(s => s.trim()).filter(s => s);
+    if (parts.length < 2) continue;
+    
+    // 解析序号
+    let no = NaN;
+    const noPart = colMap.no !== undefined && colMap.no < parts.length ? parts[colMap.no] : parts[0];
+    const noMatch = noPart.match(/^(\d+)[\.、\s)）]*$/);
+    no = noMatch ? parseInt(noMatch[1]) : parseInt(noPart);
+    
+    if (isNaN(no) || no <= 0) {
+      // 尝试第一个纯数字
+      for (let p of parts) {
+        const m = p.match(/^(\d{1,3})$/);
+        if (m) { no = parseInt(m[1]); break; }
+      }
+    }
+    if (isNaN(no) || no <= 0) continue;
+    
+    const getVal = (field) => {
+      const idx = colMap[field];
+      return (idx !== undefined && idx >= 0 && idx < parts.length) ? parts[idx] : '';
+    };
+    
+    const code = getVal('code');
+    const name = getVal('name');
+    const qty = parseInt(getVal('qty')) || 1;
+    const mat = getVal('mat');
+    const spec = getVal('spec');
+    
+    if (!name && !mat && !code) continue;
+    
+    results.push({
+      no, code, name, material: mat, qty, spec,
+      area: '', pct: 0,
+      type: guessMaterialType(mat),
+      conf: 'high'
+    });
+  }
+  
+  // 去重排序
+  const seen = new Set();
+  return results.filter(r => {
+    if (seen.has(r.no)) return false;
+    seen.add(r.no);
+    return true;
+  }).sort((a, b) => a.no - b.no);
 }
 
 // ═══════════════════════════════════════════
