@@ -2327,7 +2327,7 @@ function renderOCRResults() {
     
     return `
       <div class="ocr-row" data-index="${i}">
-        <div class="ocr-num">${r.no}</div>
+        <input type="number" class="ocr-num" value="${r.no}" min="1" onchange="updateOCR(${i},'no',this.value)" style="width:50px;text-align:center;border:1px solid var(--border);border-radius:4px;padding:.15rem .3rem;font-size:.8rem;">
         <input type="text" value="${r.code}" placeholder="物料编码" onchange="updateOCR(${i},'code',this.value)" style="min-width:90px;flex:0.8;">
         <input type="text" value="${r.name}" placeholder="零件名" onchange="updateOCR(${i},'name',this.value)">
         <input type="number" value="${r.qty}" min="1" onchange="updateOCR(${i},'qty',this.value)" style="max-width:50px">
@@ -2344,6 +2344,13 @@ function renderOCRResults() {
 
 function updateOCR(index, field, value) {
   if (ocrResults[index]) {
+    if (field === 'no') {
+      ocrResults[index].no = parseInt(value) || ocrResults[index].no;
+      // 按序号重新排序
+      ocrResults.sort((a, b) => a.no - b.no);
+      renderOCRResults();
+      return;
+    }
     ocrResults[index][field] = value;
     if (field === 'material') {
       ocrResults[index].type = guessMaterialType(value);
