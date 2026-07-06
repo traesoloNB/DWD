@@ -541,7 +541,13 @@
       </div>
     </div>
     
-    <!-- 候选区域（OCR识别到文字但没匹配到BOM格式时展示） -->
+    <!-- 调试面板：显示百度API原始返回数据 -->
+    <div id="ocrDebugPanel" style="display:none;margin-top:.5rem;">
+      <div style="background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:.75rem;">
+        <div style="font-weight:600;font-size:.8rem;margin-bottom:.4rem;color:#555;">🔧 调试信息</div>
+        <div id="ocrDebugContent" style="font-size:.72rem;font-family:monospace;white-space:pre-wrap;color:#333;max-height:300px;overflow:auto;background:#fff;padding:.5rem;border-radius:4px;border:1px solid #e0e0e0;"></div>
+      </div>
+    </div>
     <div id="ocrFallbackPanel" style="display:none;margin-top:.75rem;">
       <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:.75rem;">
         <div style="font-weight:600;font-size:.85rem;margin-bottom:.4rem;">⚠️ 未匹配到标准 BOM 格式</div>
@@ -1535,11 +1541,30 @@ function parseBOMFromPDFText(text) {
   
   // 去重排序
   const seen = new Set();
-  return results.filter(r => {
+  const final = results.filter(r => {
     if (seen.has(r.no)) return false;
     seen.add(r.no);
     return true;
   }).sort((a, b) => a.no - b.no);
+  
+  // 调试输出
+  const debugPanel = document.getElementById('ocrDebugPanel');
+  const debugContent = document.getElementById('ocrDebugContent');
+  if (debugPanel && debugContent) {
+    let debug = '=== 百度API原始行数据 ===\n';
+    rows.forEach((row, i) => {
+      debug += 'Row[' + i + ']: ' + row.map(c => c.words).join(' | ') + '\n';
+    });
+    debug += '\n=== 列映射 ===\n' + JSON.stringify(colMap, null, 2) + '\n';
+    debug += '\n=== 解析结果（' + final.length + '个） ===\n';
+    final.forEach(r => {
+      debug += '#' + r.no + ' | ' + r.code + ' | ' + r.name + ' | qty=' + r.qty + ' | ' + r.material + '\n';
+    });
+    debugContent.textContent = debug;
+    debugPanel.style.display = 'block';
+  }
+  
+  return final;
 }
 
 // ═══════════════════════════════════════════
