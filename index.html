@@ -512,6 +512,11 @@
           <input type="password" id="baiduSecretKey" placeholder="Secret Key" style="flex:1;min-width:140px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveBaiduConfig()">
           <button class="btn btn-outline btn-sm" onclick="testBaiduOcr()" id="btnTestBaidu" style="font-size:.75rem;">⚡ 测试连接</button>
         </div>
+        <!-- 手动Token输入（CORS代理失效时备用） -->
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-top:.4rem;">
+          <input type="text" id="baiduManualToken" placeholder="或手动填入 Access Token（CORS代理失效时备用）" style="flex:1;min-width:200px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveBaiduConfig()">
+          <button class="btn btn-outline btn-sm" onclick="openBaiduTokenUrl()" style="font-size:.72rem;padding:.2rem .5rem;">🔗 获取Token</button>
+        </div>
         <div style="font-size:.72rem;color:var(--muted);margin-top:.35rem;">
           <a href="https://console.bce.baidu.com/ai/?_=ai/ocr/overview/index" target="_blank" style="color:var(--accent);">去百度智能云免费申请 →</a>
           <span id="baiduConfigStatus" style="margin-left:.5rem;"></span>
@@ -1942,13 +1947,22 @@ function loadOcrDemo() {
 (function loadBaiduConfig() {
   const ak = localStorage.getItem('baidu_api_key');
   const sk = localStorage.getItem('baidu_secret_key');
+  const manualToken = localStorage.getItem('baidu_manual_token');
   const apiEl = document.getElementById('baiduApiKey');
   const secEl = document.getElementById('baiduSecretKey');
+  const tokenEl = document.getElementById('baiduManualToken');
   if (ak && apiEl) apiEl.value = ak;
   if (sk && secEl) secEl.value = sk;
+  if (manualToken && tokenEl) tokenEl.value = manualToken;
   if (ak && sk) {
     const statusEl = document.getElementById('baiduConfigStatus');
-    if (statusEl) statusEl.innerHTML = '<span style="color:#2e7d32;">✓ 已配置</span>';
+    if (statusEl) {
+      if (manualToken) {
+        statusEl.innerHTML = '<span style="color:#2e7d32;">✓ 已配置（使用手动Token）</span>';
+      } else {
+        statusEl.innerHTML = '<span style="color:#2e7d32;">✓ 已配置</span>';
+      }
+    }
     // 已配置则自动展开（方便查看和测试）
     const body = document.getElementById('ocrConfigBody');
     const toggle = document.getElementById('ocrConfigToggle');
@@ -1962,13 +1976,26 @@ function loadOcrDemo() {
 function saveBaiduConfig() {
   const ak = document.getElementById('baiduApiKey').value.trim();
   const sk = document.getElementById('baiduSecretKey').value.trim();
+  const manualToken = document.getElementById('baiduManualToken').value.trim();
   if (ak) localStorage.setItem('baidu_api_key', ak);
   if (sk) localStorage.setItem('baidu_secret_key', sk);
+  if (manualToken) localStorage.setItem('baidu_manual_token', manualToken);
   if (ak && sk) {
     document.getElementById('baiduConfigStatus').innerHTML = '<span style="color:#2e7d32;">✓ 已保存</span>';
   } else {
     document.getElementById('baiduConfigStatus').innerHTML = '';
   }
+}
+
+function openBaiduTokenUrl() {
+  const ak = document.getElementById('baiduApiKey').value.trim();
+  const sk = document.getElementById('baiduSecretKey').value.trim();
+  if (!ak || !sk) {
+    alert('请先填写 API Key 和 Secret Key');
+    return;
+  }
+  const url = 'https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=' + encodeURIComponent(ak) + '&client_secret=' + encodeURIComponent(sk);
+  window.open(url, '_blank');
 }
 
 async function testBaiduOcr() {
@@ -2001,6 +2028,13 @@ async function getBaiduAccessToken() {
   const ak = localStorage.getItem('baidu_api_key');
   const sk = localStorage.getItem('baidu_secret_key');
   if (!ak || !sk) return null;
+  
+  // 优先使用手动填入的 Token（CORS代理失效时备用）
+  const manualToken = localStorage.getItem('baidu_manual_token');
+  if (manualToken && manualToken.length > 20) {
+    console.log('Using manually entered token');
+    return manualToken;
+  }
   
   // 清除可能已失效的缓存 token
   const cachedToken = sessionStorage.getItem('baidu_access_token');
