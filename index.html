@@ -2058,8 +2058,8 @@ async function callBaiduOCR(base64Image) {
   let token = await getBaiduAccessToken();
   if (!token) throw new Error('未配置百度 API Key 或获取 Token 失败');
 
-  // 使用通用文字识别高精度版（带坐标，有免费额度）
-  const url = 'https://aip.baidubce.com/rest/2.0/ocr/v1/accurate?access_token=' + token;
+  // 使用表格文字识别V2（直接返回行列结构，不需要坐标聚类）
+  const url = 'https://aip.baidubce.com/rest/2.0/ocr/v1/table?access_token=' + token;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -2073,7 +2073,7 @@ async function callBaiduOCR(base64Image) {
     sessionStorage.removeItem('baidu_access_token');
     token = await getBaiduAccessToken();
     if (!token) throw new Error('重新获取 Token 失败');
-    const retryUrl = 'https://aip.baidubce.com/rest/2.0/ocr/v1/accurate?access_token=' + token;
+    const retryUrl = 'https://aip.baidubce.com/rest/2.0/ocr/v1/table?access_token=' + token;
     const retryRes = await fetch(retryUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -2083,15 +2083,15 @@ async function callBaiduOCR(base64Image) {
     if (retryData.error_code) {
       throw new Error('百度OCR错误 ' + retryData.error_code + ': ' + retryData.error_msg);
     }
-    return retryData.words_result || [];
+    return (retryData.tables_result && retryData.tables_result[0] && retryData.tables_result[0].body) || [];
   }
 
   if (data.error_code) {
     throw new Error('百度OCR错误 ' + data.error_code + ': ' + data.error_msg);
   }
-  // 防御性过滤：只返回包含 words 和 location 的有效元素
-  const result = (data.words_result || []).filter(w => w && w.words && w.location);
-  console.log('Baidu API raw response:', data.words_result_num, 'words,', result.length, 'valid after filter');
+  // 表格识别返回 tables_result[0].body，每个元素有 row, col, words
+  const result = (data.tables_result && data.tables_result[0] && data.tables_result[0].body) || [];
+  console.log('Baidu Table API raw response:', result.length, 'cells');
   return result;
 }
 
@@ -2125,62 +2125,33 @@ function fileToBase64FromUrl(imageUrl) {
   });
 }
 
-function parseBOMFromOCR(wordsResult) {
+function parseBOMFromOCR(cells) {
   const results = [];
-  if (!wordsResult || !wordsResult.length) return results;
+  if (!cells || !cells.length) return results;
 
-  const words = wordsResult.filter(w => w && w.words && w.location);
-  if (words.length === 0) return results;
+  // 表格识别V2返回的 cells: [{row, col, words, location}, ...]
+  // 按 row 分组，每行内按 col 排序
+  const rowMap = {};
+  cells.forEach(cell => {
+    if (!cell || !cell.words) return;
+    const r = cell.row;
+    if (!rowMap[r]) rowMap[r] = [];
+    rowMap[r].push(cell);
+  });
 
-  // ═══════════════════════════════════════════════
-  // Step 1: 按 y 坐标聚类成行
-  // ═══════════════════════════════════════════════
-  // 给每个词块标注中心点
-  const items = words.map(w => ({
-    text: w.words.trim(),
-    left: w.location.left,
-    top: w.location.top,
-    right: w.location.left + w.location.width,
-    bottom: w.location.top + w.location.height,
-    cx: w.location.left + w.location.width / 2,
-    cy: w.location.top + w.location.height / 2,
-    h: w.location.height
-  }));
+  const rows = Object.keys(rowMap)
+    .map(k => parseInt(k))
+    .sort((a, b) => a - b)
+    .map(r => rowMap[r].sort((a, b) => a.col - b.col));
 
-  // 用中位数高度计算阈值（比平均值更抗干扰）
-  const heights = items.map(w => w.h).sort((a, b) => a - b);
-  const medianH = heights[Math.floor(heights.length / 2)] || 20;
-  const rowThreshold = medianH * 0.6; // 两个词块中心y差 < 阈值 → 同行
-
-  // 聚类：贪心合并
-  const sorted = [...items].sort((a, b) => a.cy - b.cy);
-  const rowGroups = [];
-  let curGroup = [sorted[0]];
-  for (let i = 1; i < sorted.length; i++) {
-    const w = sorted[i];
-    // 与当前组所有成员比较，如果有任何一个y距离够近就归入
-    const merged = curGroup.some(g => Math.abs(g.cy - w.cy) < rowThreshold);
-    if (merged) {
-      curGroup.push(w);
-    } else {
-      rowGroups.push(curGroup);
-      curGroup = [w];
-    }
-  }
-  rowGroups.push(curGroup);
-
-  // 组内按x排序
-  const rows = rowGroups.map(g => g.sort((a, b) => a.cx - b.cx));
-
-  console.log('OCR rows:', rows.length, rows.map(r => r.map(w => w.text).join(' | ')));
+  console.log('Table rows:', rows.length, rows.map(r => r.map(c => c.words).join(' | ')));
 
   // ═══════════════════════════════════════════════
-  // Step 2: 找表头行
+  // Step 1: 找表头行
   // ═══════════════════════════════════════════════
   let headerIdx = -1;
   for (let i = 0; i < Math.min(6, rows.length); i++) {
-    const rowText = rows[i].map(w => w.text).join('');
-    // 表头通常同时包含"序号"和"名称"或"材料"等关键词
+    const rowText = rows[i].map(c => c.words).join('');
     const hasNo = /(序号|编号|NO\.?|No\.?|序)/i.test(rowText);
     const hasName = /(名称|零件|品名|name|部件|图样名称|物料)/i.test(rowText);
     const hasMat = /(材料|材质|mat|material)/i.test(rowText);
@@ -2190,10 +2161,9 @@ function parseBOMFromOCR(wordsResult) {
       break;
     }
   }
-  // 兜底：找含"材料"或"数量"的行
   if (headerIdx === -1) {
     for (let i = 0; i < Math.min(6, rows.length); i++) {
-      const rowText = rows[i].map(w => w.text).join('');
+      const rowText = rows[i].map(c => c.words).join('');
       if (/(材料|材质|数量|qty|品名)/i.test(rowText)) {
         headerIdx = i;
         break;
@@ -2203,49 +2173,40 @@ function parseBOMFromOCR(wordsResult) {
   if (headerIdx === -1) headerIdx = 0;
 
   const headerRow = rows[headerIdx];
-  console.log('Header row:', headerRow.map(w => w.text).join(' | '));
+  console.log('Header row:', headerRow.map(c => c.words).join(' | '));
 
   // ═══════════════════════════════════════════════
-  // Step 3: 列映射（评分制，避免 编号/序号 歧义）
+  // Step 2: 列映射（评分制）
   // ═══════════════════════════════════════════════
   const colMap = {};
   const colScores = {};
   for (let c = 0; c < headerRow.length; c++) {
-    const h = headerRow[c].text.replace(/\s/g, '');
+    const h = headerRow[c].words.replace(/\s/g, '');
     colScores[c] = {};
 
-    // 序号 vs 编号 区分
     if (/^序号$/.test(h)) colScores[c].no = 15;
     else if (/序号/.test(h)) colScores[c].no = 10;
     if (/NO\.?|No\.?|^序$/.test(h)) colScores[c].no = (colScores[c].no || 0) + 5;
 
-    // 编号/代码
     if (/^编号$/.test(h)) colScores[c].code = 15;
     else if (/编号|编码|代码|料号|图样代号/i.test(h)) colScores[c].code = 10;
     if (/code|article|part\.?no/i.test(h)) colScores[c].code = (colScores[c].code || 0) + 5;
 
-    // 名称
     if (/名称|零件|品名|部件|图样名称/i.test(h)) colScores[c].name = 10;
     if (/product|name|description/i.test(h)) colScores[c].name = (colScores[c].name || 0) + 5;
 
-    // 数量
     if (/数量|qty\.?|quantity|件数/i.test(h)) colScores[c].qty = 10;
 
-    // 材料
     if (/材料|材质|mat\.?|material/i.test(h)) colScores[c].mat = 10;
 
-    // 规格
     if (/规格|spec\.?|型号|specification/i.test(h)) colScores[c].spec = 10;
 
-    // 备注
     if (/备注|note|remark|说明/i.test(h)) colScores[c].remark = 10;
 
-    // 取最高分
     const best = Object.entries(colScores[c]).sort((a, b) => b[1] - a[1])[0];
     if (best && best[1] >= 5) colMap[best[0]] = c;
   }
 
-  // 兜底列映射
   if (Object.keys(colMap).length === 0) {
     colMap.no = 0;
     colMap.code = headerRow.length > 4 ? 1 : -1;
@@ -2257,54 +2218,48 @@ function parseBOMFromOCR(wordsResult) {
   console.log('Column mapping:', colMap);
 
   // ═══════════════════════════════════════════════
-  // Step 4: 解析数据行 — 宽松匹配序号
+  // Step 3: 解析数据行（按 col 索引直接取，不用坐标猜）
   // ═══════════════════════════════════════════════
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
 
-    // 跳过空行或全是表头关键词的重复行
-    const rowText = row.map(w => w.text).join('');
+    // 补齐缺失列（表格可能有合并单元格）
+    const maxCol = Math.max(...row.map(c => c.col));
+    const filled = new Array(maxCol + 1).fill(null);
+    row.forEach(c => filled[c.col] = c);
+
+    const rowText = filled.map(c => c ? c.words : '').join('');
     if (rowText.length === 0) continue;
     if (/^(序号|编号|名称|材料|数量|规格|备注)+$/.test(rowText.replace(/\s/g, ''))) continue;
 
-    // 取序号列的值
-    let noVal = '';
-    if (colMap.no !== undefined && colMap.no < row.length) {
-      noVal = row[colMap.no].text.trim();
-    }
+    const getCell = (colIdx) => {
+      if (colIdx === undefined || colIdx < 0 || colIdx >= filled.length) return '';
+      const cell = filled[colIdx];
+      return cell ? cell.words.trim() : '';
+    };
 
-    // 宽松解析序号：支持 "3" "③" "3." "3、" 等格式
+    // 取序号
+    let noVal = getCell(colMap.no);
     const noMatch = noVal.match(/^(\d+)[\.、\s)）]*$/);
     let no = noMatch ? parseInt(noMatch[1]) : parseInt(noVal);
 
-    // 如果序号列解析失败，尝试用行内第一个纯数字作为序号
     if (isNaN(no) || no <= 0 || no > 999) {
-      for (let j = 0; j < row.length; j++) {
-        const t = row[j].text.trim();
+      for (let j = 0; j < filled.length; j++) {
+        const t = getCell(j);
         const m = t.match(/^(\d{1,3})$/);
-        if (m) {
-          no = parseInt(m[1]);
-          break;
-        }
+        if (m) { no = parseInt(m[1]); break; }
       }
     }
+    if (isNaN(no) || no <= 0) no = results.length + 1;
 
-    // 最终检查：如果还是无有效序号，用行号递增（保留数据不丢弃）
-    if (isNaN(no) || no <= 0) {
-      no = results.length + 1; // 自动编号
-    }
+    const code = getCell(colMap.code);
+    const name = getCell(colMap.name);
+    const qty = parseInt(getCell(colMap.qty)) || 1;
+    const mat = getCell(colMap.mat);
+    const spec = getCell(colMap.spec);
 
-    const code = colMap.code !== undefined && colMap.code >= 0 && colMap.code < row.length ? row[colMap.code].text.trim() : '';
-    const name = colMap.name !== undefined && colMap.name >= 0 && colMap.name < row.length ? row[colMap.name].text.trim() : '';
-    const qtyVal = colMap.qty !== undefined && colMap.qty >= 0 && colMap.qty < row.length ? row[colMap.qty].text.trim() : '1';
-    const qty = parseInt(qtyVal) || 1;
-    const mat = colMap.mat !== undefined && colMap.mat >= 0 && colMap.mat < row.length ? row[colMap.mat].text.trim() : '';
-    const spec = colMap.spec !== undefined && colMap.spec >= 0 && colMap.spec < row.length ? row[colMap.spec].text.trim() : '';
-
-    // 至少要有名称或材料才保留（不能是纯空行）
     if (!name && !mat && !code && !spec) continue;
 
-    // 如果code或name里包含表头关键词，说明这一行可能是重复的表头
     const combined = (code + name + mat).replace(/\s/g, '');
     if (/^(序号|编号|名称|材料|数量)$/.test(combined)) continue;
 
@@ -2316,7 +2271,6 @@ function parseBOMFromOCR(wordsResult) {
     });
   }
 
-  // 去重：相同序号只保留第一个
   const seen = new Set();
   return results.filter(r => {
     if (seen.has(r.no)) return false;
