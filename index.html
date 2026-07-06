@@ -2172,14 +2172,23 @@ function parseBOMFromOCR(cells) {
   const results = [];
   if (!cells || !cells.length) return results;
 
-  // 表格识别V2返回的 cells: [{row, col, words, location}, ...]
-  // 防御性检查：过滤掉缺少 row/col 的异常cell
-  const validCells = cells.filter(c => c && c.words && typeof c.row === 'number' && typeof c.col === 'number');
-  console.log('Valid cells:', validCells.length, '/', cells.length);
+  // 百度表格识别V2实际返回格式：
+  // {row_start, row_end, col_start, col_end, word, cell_location:[...], ...}
+  // 标准化为统一格式：{row, col, words}
+  const normalized = cells.map(c => {
+    if (!c) return null;
+    return {
+      row: c.row_start !== undefined ? c.row_start : (c.row !== undefined ? c.row : -1),
+      col: c.col_start !== undefined ? c.col_start : (c.col !== undefined ? c.col : -1),
+      words: c.word || c.words || ''
+    };
+  }).filter(c => c && c.words && c.row >= 0 && c.col >= 0);
+
+  console.log('Normalized cells:', normalized.length, '/', cells.length);
   
   // 按 row 分组，每行内按 col 排序
   const rowMap = {};
-  validCells.forEach(cell => {
+  normalized.forEach(cell => {
     const r = cell.row;
     if (!rowMap[r]) rowMap[r] = [];
     rowMap[r].push(cell);
