@@ -2090,8 +2090,17 @@ async function callBaiduOCR(base64Image) {
     throw new Error('百度OCR错误 ' + data.error_code + ': ' + data.error_msg);
   }
   // 表格识别返回 tables_result[0].body，每个元素有 row, col, words
-  const result = (data.tables_result && data.tables_result[0] && data.tables_result[0].body) || [];
-  console.log('Baidu Table API raw response:', result.length, 'cells');
+  console.log('Baidu Table API full response keys:', Object.keys(data));
+  const tablesResult = data.tables_result;
+  console.log('tables_result:', tablesResult ? 'exists, length=' + tablesResult.length : 'missing');
+  if (tablesResult && tablesResult[0]) {
+    console.log('tables_result[0] keys:', Object.keys(tablesResult[0]));
+    console.log('tables_result[0].body type:', typeof tablesResult[0].body, 'length:', tablesResult[0].body ? tablesResult[0].body.length : 0);
+    if (tablesResult[0].body && tablesResult[0].body.length > 0) {
+      console.log('First cell sample:', JSON.stringify(tablesResult[0].body[0]));
+    }
+  }
+  const result = (tablesResult && tablesResult[0] && tablesResult[0].body) || [];
   return result;
 }
 
@@ -2130,19 +2139,24 @@ function parseBOMFromOCR(cells) {
   if (!cells || !cells.length) return results;
 
   // 表格识别V2返回的 cells: [{row, col, words, location}, ...]
+  // 防御性检查：过滤掉缺少 row/col 的异常cell
+  const validCells = cells.filter(c => c && c.words && typeof c.row === 'number' && typeof c.col === 'number');
+  console.log('Valid cells:', validCells.length, '/', cells.length);
+  
   // 按 row 分组，每行内按 col 排序
   const rowMap = {};
-  cells.forEach(cell => {
-    if (!cell || !cell.words) return;
+  validCells.forEach(cell => {
     const r = cell.row;
     if (!rowMap[r]) rowMap[r] = [];
     rowMap[r].push(cell);
   });
 
-  const rows = Object.keys(rowMap)
+  const rowKeys = Object.keys(rowMap)
     .map(k => parseInt(k))
-    .sort((a, b) => a - b)
-    .map(r => rowMap[r].sort((a, b) => a.col - b.col));
+    .filter(k => !isNaN(k))
+    .sort((a, b) => a - b);
+  
+  const rows = rowKeys.map(r => rowMap[r].sort((a, b) => a.col - b.col));
 
   console.log('Table rows:', rows.length, rows.map(r => r.map(c => c.words).join(' | ')));
 
