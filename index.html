@@ -1878,6 +1878,52 @@ function rotateImage() {
     '已旋转 ' + ocrRotation + '°，请重新框选区域';
 }
 
+/** 图片预处理：灰度化 + 对比度增强 + 自适应二值化 */
+function preprocessCanvas(canvas) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+  const len = data.length;
+  
+  // Step 1: 灰度化 + 对比度增强（提高文字与背景的差异）
+  const contrast = 1.8; // 对比度倍率
+  const brightness = -20; // 亮度偏移
+  
+  for (let i = 0; i < len; i += 4) {
+    // 灰度化（加权平均）
+    let gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    
+    // 对比度增强
+    gray = (gray - 128) * contrast + 128 + brightness;
+    gray = Math.max(0, Math.min(255, gray));
+    
+    data[i] = gray;
+    data[i + 1] = gray;
+    data[i + 2] = gray;
+  }
+  
+  // Step 2: 自适应二值化（Otsu算法的简化版：用平均亮度作为阈值）
+  // 先计算全局平均亮度
+  let sum = 0;
+  for (let i = 0; i < len; i += 4) {
+    sum += data[i];
+  }
+  const avg = sum / (len / 4);
+  // 阈值 = 平均亮度 + 偏移（让背景变白、文字变黑）
+  const threshold = avg + 15;
+  
+  for (let i = 0; i < len; i += 4) {
+    const val = data[i] > threshold ? 255 : 0;
+    data[i] = val;
+    data[i + 1] = val;
+    data[i + 2] = val;
+  }
+  
+  ctx.putImageData(imageData, 0, 0);
+}
+
 async function recognizeSelectedArea() {
   const progressEl = document.getElementById('ocrProgress');
   const resultPanel = document.getElementById('ocrResultPanel');
@@ -1923,8 +1969,11 @@ async function recognizeSelectedArea() {
       const cropCtx = cropCanvas.getContext('2d');
       cropCtx.drawImage(canvas, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
       
+      // 图片预处理：灰度化 + 对比度增强 + 二值化（大幅提高表格识别准确率）
+      preprocessCanvas(cropCanvas);
+      
       const croppedBase64 = cropCanvas.toDataURL('image/jpeg', 0.95).split(',')[1];
-      console.log('选区 #' + (i + 1) + ':', Math.round(sel.w), 'x', Math.round(sel.h), 'px');
+      console.log('选区 #' + (i + 1) + ':', Math.round(sel.w), 'x', Math.round(sel.h), 'px', '(已预处理)');
       
       // 调用百度OCR
       const wordsResult = await callBaiduOCR(croppedBase64);
