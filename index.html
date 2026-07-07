@@ -487,6 +487,7 @@
         <button class="btn btn-outline btn-sm" onclick="clearSelection()" id="btnClearSelection">↩ 撤销上一框</button>
         <button class="btn btn-outline btn-sm" onclick="clearAllSelections()" style="font-size:.72rem;padding:.15rem .4rem;">✕ 全部清除</button>
         <button class="btn btn-primary btn-sm" onclick="recognizeSelectedArea()" id="btnRecognizeSelected">🔍 识别选区</button>
+        <button class="btn btn-sm" onclick="processWithQwenVL()" id="btnQwenVL" style="background:linear-gradient(135deg,#8e24aa,#1565c0);color:#fff;border:none;font-weight:600;">🤖 AI智能提取（推荐）</button>
         <span style="font-size:.75rem;color:var(--muted);" id="selectionStatus"></span>
       </div>
       <!-- 图片显示区 -->
@@ -499,12 +500,41 @@
       <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem;">💡 框选：鼠标拖拽选中 BOM 表格区域 → 缩放/旋转让图片更清晰 → 点"识别选区"</div>
     </div>
     
+    <!-- PDF多页预览选择器 -->
+    <div id="pdfPageSelector" style="display:none;margin-top:.75rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:.75rem 1rem;">
+      <div style="font-weight:600;font-size:.85rem;margin-bottom:.5rem;">📄 PDF 多页预览 — 请选择要识别的页面</div>
+      <div id="pdfPageThumbnails" style="display:flex;gap:.5rem;overflow-x:auto;padding:.25rem;"></div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem;">点击上方缩略图选择页面，然后点击「AI智能提取」</div>
+    </div>
+
+    <!-- Qwen-VL AI配置 -->
+    <div id="qwenVlConfig" style="background:linear-gradient(135deg,#f3e5f5,#e3f2fd);border:1px solid #ce93d8;border-radius:6px;padding:.75rem 1rem;margin-top:.75rem;">
+      <div onclick="toggleQwenVlConfig()" style="cursor:pointer;display:flex;align-items:center;gap:.5rem;">
+        <span id="qwenVlConfigToggle">▶</span>
+        <span style="font-weight:600;font-size:.85rem;color:var(--text);">🤖 配置 AI 智能提取（Qwen-VL）</span>
+        <span style="font-size:.75rem;color:var(--muted);">阿里云百炼 · 视觉大模型</span>
+      </div>
+      <div id="qwenVlConfigBody" style="display:none;margin-top:.5rem;">
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+          <input type="password" id="qwenVlApiKey" placeholder="百炼 API Key（sk-xxx）" style="flex:1;min-width:200px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.8rem;" onchange="saveQwenVlConfig()">
+          <button class="btn btn-outline btn-sm" onclick="testQwenVlConnection()" id="btnTestQwenVl" style="font-size:.75rem;">⚡ 测试连接</button>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:.35rem;">
+          <a href="https://bailian.console.aliyun.com/?apiKey=1#/api-key" target="_blank" style="color:var(--accent);">去阿里云百炼免费申请 API Key →</a>
+          <span id="qwenVlConfigStatus" style="margin-left:.5rem;"></span>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:.25rem;">
+          💡 支持自动识别爆炸图中的零件编号、名称、数量、材料等信息，准确率远高于传统OCR
+        </div>
+      </div>
+    </div>
+
     <!-- 百度OCR配置 -->
     <div id="baiduOcrConfig" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:.75rem 1rem;margin-top:.75rem;">
       <div onclick="toggleOcrConfig()" style="cursor:pointer;display:flex;align-items:center;gap:.5rem;">
         <span id="ocrConfigToggle">▶</span>
         <span style="font-weight:600;font-size:.85rem;color:var(--text);">🔑 配置百度 OCR（识别图片中的文字）</span>
-        <span style="font-size:.75rem;color:var(--muted);">免费 500次/天</span>
+        <span style="font-size:.75rem;color:var(--muted);">免费 500次/天 · 备选方案</span>
       </div>
       <div id="ocrConfigBody" style="display:none;margin-top:.5rem;">
         <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
@@ -1380,7 +1410,10 @@ async function processOCRFile(file) {
       showOCRPreview(img);
       showSelectionOnCanvas(img);
       selectionArea.style.display = 'block';
-      progressEl.textContent = '🖱️ 用鼠标在下方图片上框选出 BOM 表格区域，然后点击"🔍 识别选区"';
+      progressEl.textContent = '🖱️ 用鼠标在下方图片上框选出 BOM 表格区域，然后点击"🔍 识别选区"，或直接点击"🤖 AI智能提取"';
+      
+      // 同时渲染PDF多页预览供AI选择
+      renderPdfPages(file);
     } else {
       // 图片文件，直接走OCR
       const imageUrl = URL.createObjectURL(file);
@@ -2969,6 +3002,300 @@ function setupDragDrop(dropId, inputId) {
   });
 }
 
+/* ═══════════════════════════════════════════════
+   Qwen-VL AI 智能提取
+   ═══════════════════════════════════════════════ */
+
+let qwenVlSelectedPage = 0;
+let qwenVlPdfPages = [];
+
+function toggleQwenVlConfig() {
+  const body = document.getElementById('qwenVlConfigBody');
+  const toggle = document.getElementById('qwenVlConfigToggle');
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    toggle.textContent = '▼';
+  } else {
+    body.style.display = 'none';
+    toggle.textContent = '▶';
+  }
+}
+
+function saveQwenVlConfig() {
+  const key = document.getElementById('qwenVlApiKey').value.trim();
+  if (key) localStorage.setItem('qwen_vl_api_key', key);
+}
+
+function loadQwenVlConfig() {
+  const key = localStorage.getItem('qwen_vl_api_key');
+  if (key) document.getElementById('qwenVlApiKey').value = key;
+}
+
+async function testQwenVlConnection() {
+  const status = document.getElementById('qwenVlConfigStatus');
+  const key = document.getElementById('qwenVlApiKey').value.trim();
+  if (!key) {
+    status.textContent = '❌ 请先输入 API Key';
+    return;
+  }
+  status.textContent = '⏳ 测试中...';
+  try {
+    const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/models', {
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + key }
+    });
+    if (resp.ok) {
+      status.textContent = '✅ 连接成功';
+    } else {
+      status.textContent = '❌ 连接失败: ' + resp.status;
+    }
+  } catch (e) {
+    status.textContent = '❌ 网络错误: ' + e.message;
+  }
+}
+
+/** 渲染PDF所有页面的缩略图供用户选择 */
+async function renderPdfPages(file) {
+  if (!file || file.type !== 'application/pdf') return;
+  if (typeof pdfjsLib === 'undefined') {
+    console.warn('PDF.js not loaded');
+    return;
+  }
+  
+  const container = document.getElementById('pdfPageThumbnails');
+  const selector = document.getElementById('pdfPageSelector');
+  container.innerHTML = '';
+  qwenVlPdfPages = [];
+  
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({scale: 0.3});
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({canvasContext: ctx, viewport}).promise;
+      
+      // 保存页面数据
+      const fullViewport = page.getViewport({scale: 2.0});
+      qwenVlPdfPages.push({pageNum: i, viewport: fullViewport, pdf});
+      
+      // 创建缩略图
+      const thumb = document.createElement('div');
+      thumb.style.cssText = 'flex-shrink:0;width:120px;height:auto;border:2px solid #ddd;border-radius:4px;overflow:hidden;cursor:pointer;position:relative;';
+      thumb.dataset.page = i - 1;
+      thumb.innerHTML = `<img src="${canvas.toDataURL()}" style="width:100%;display:block;"><div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.6);color:#fff;text-align:center;font-size:.7rem;padding:2px;">第${i}页</div>`;
+      thumb.onclick = () => selectPdfPage(i - 1);
+      container.appendChild(thumb);
+    }
+    
+    // 默认选中第一页
+    selectPdfPage(0);
+    selector.style.display = 'block';
+    
+  } catch (e) {
+    console.error('PDF render error:', e);
+  }
+}
+
+function selectPdfPage(pageIndex) {
+  qwenVlSelectedPage = pageIndex;
+  const thumbs = document.querySelectorAll('#pdfPageThumbnails > div');
+  thumbs.forEach((t, i) => {
+    t.style.borderColor = i === pageIndex ? '#1565c0' : '#ddd';
+    t.style.boxShadow = i === pageIndex ? '0 0 0 3px rgba(21,101,192,.3)' : 'none';
+  });
+}
+
+/** 主处理函数：调用Qwen-VL */
+async function processWithQwenVL() {
+  const progressEl = document.getElementById('ocrProgress');
+  const resultPanel = document.getElementById('ocrResultPanel');
+  const apiKey = document.getElementById('qwenVlApiKey').value.trim() || localStorage.getItem('qwen_vl_api_key');
+  
+  if (!apiKey) {
+    progressEl.textContent = '⚠️ 请先配置 Qwen-VL API Key（点击上方 🤖 配置 AI 智能提取）';
+    document.getElementById('qwenVlConfigBody').style.display = 'block';
+    document.getElementById('qwenVlConfigToggle').textContent = '▼';
+    return;
+  }
+  
+  if (!lastOcrFile) {
+    progressEl.textContent = '⚠️ 请先上传 PDF 或图片';
+    return;
+  }
+  
+  ocrResults = [];
+  resultPanel.style.display = 'none';
+  document.getElementById('ocrDebugPanel').style.display = 'none';
+  
+  try {
+    let base64Image;
+    
+    if (lastOcrFile.type === 'application/pdf') {
+      progressEl.textContent = '⏳ 正在渲染PDF页面...';
+      // 如果有PDF页面数据，渲染选中的页面
+      if (qwenVlPdfPages.length > 0 && qwenVlSelectedPage < qwenVlPdfPages.length) {
+        const pageData = qwenVlPdfPages[qwenVlSelectedPage];
+        const page = await pageData.pdf.getPage(pageData.pageNum);
+        const canvas = document.createElement('canvas');
+        canvas.width = pageData.viewport.width;
+        canvas.height = pageData.viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({canvasContext: ctx, viewport: pageData.viewport}).promise;
+        base64Image = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+      } else {
+        // 回退到pdfToImage
+        const imageUrl = await pdfToImage(lastOcrFile);
+        const img = await loadImage(imageUrl);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        base64Image = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+      }
+    } else {
+      // 图片文件
+      const imageUrl = URL.createObjectURL(lastOcrFile);
+      const img = await loadImage(imageUrl);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      base64Image = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+    }
+    
+    progressEl.textContent = '⏳ AI 正在分析爆炸图，请稍候...';
+    const result = await callQwenVL(base64Image, apiKey);
+    
+    if (!result || result.length === 0) {
+      progressEl.textContent = '⚠️ AI 未能识别出 BOM 数据，请尝试框选表格区域后使用百度 OCR，或手动输入。';
+      return;
+    }
+    
+    ocrResults = result;
+    renderOCRResults();
+    progressEl.textContent = '✅ AI 识别完成，共 ' + result.length + ' 个零件。请检查确认后点击「确认并填充到 BOM」';
+    resultPanel.style.display = '';
+    
+  } catch (err) {
+    console.error('Qwen-VL Error:', err);
+    progressEl.textContent = '❌ AI 识别失败：' + (err.message || '未知错误');
+  }
+}
+
+/** 调用阿里云百炼 Qwen-VL API */
+async function callQwenVL(base64Image, apiKey) {
+  const prompt = `你是一个专业的水暖产品BOM表解析助手。请仔细分析这张爆炸图（BOM图），提取所有零件的信息。
+
+要求：
+1. 识别图中的零件编号（序号）、品号/代号、品名/名称、数量、材料/材质
+2. 注意零件可能有气泡标注（圆圈里的数字），数字对应BOM表中的序号
+3. 如果图片包含完整的BOM表格，请逐行提取
+4. 输出必须是严格的 JSON 数组格式，每个元素包含以下字段：
+   - "no": 序号（整数）
+   - "part_no": 品号/零件编号（字符串，没有则填空字符串）
+   - "name": 品名/零件名称（字符串）
+   - "qty": 数量（整数，默认1）
+   - "material": 材料/材质（字符串，如"黄铜"、"不锈钢"、"ABS"等）
+   - "spec": 规格（字符串，没有则填空字符串）
+   - "note": 备注（字符串，没有则填空字符串）
+
+5. 只输出 JSON 数组，不要任何其他文字说明
+6. 如果无法识别，输出空数组 []
+
+示例输出格式：
+[
+  {"no":1,"part_no":"HM-001","name":"壳体","qty":1,"material":"黄铜","spec":"","note":""},
+  {"no":2,"part_no":"","name":"阀芯","qty":1,"material":"陶瓷","spec":"35mm","note":""}
+]`;
+
+  const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    },
+    body: JSON.stringify({
+      model: 'qwen-vl-plus',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + base64Image } }
+          ]
+        }
+      ],
+      max_tokens: 4000,
+      temperature: 0.1
+    })
+  });
+  
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error('API请求失败: ' + resp.status + ' ' + errText);
+  }
+  
+  const data = await resp.json();
+  const content = data.choices?.[0]?.message?.content || '';
+  console.log('Qwen-VL raw response:', content);
+  
+  return parseQwenVLResult(content);
+}
+
+/** 解析Qwen-VL返回的文本，提取JSON */
+function parseQwenVLResult(text) {
+  if (!text) return [];
+  
+  // 尝试提取JSON数组
+  let jsonStr = '';
+  
+  // 方法1: 找 ```json ... ``` 代码块
+  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlock) {
+    jsonStr = codeBlock[1].trim();
+  } else {
+    // 方法2: 找 [ ... ] 数组
+    const arrayMatch = text.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      jsonStr = arrayMatch[0];
+    } else {
+      // 方法3: 整个文本就是JSON
+      jsonStr = text.trim();
+    }
+  }
+  
+  try {
+    const items = JSON.parse(jsonStr);
+    if (!Array.isArray(items)) return [];
+    
+    // 映射到ocrResults格式
+    return items.map(item => ({
+      no: parseInt(item.no) || parseInt(item.序号) || 0,
+      code: (item.part_no || item.品号 || item.编号 || item.code || '').toString(),
+      name: (item.name || item.品名 || item.名称 || item.零件名称 || '').toString(),
+      material: (item.material || item.材料 || item.材质 || item.mat || '').toString(),
+      qty: parseInt(item.qty || item.数量 || item.件数) || 1,
+      spec: (item.spec || item.规格 || item.型号 || '').toString(),
+      area: '',
+      pct: 0,
+      type: guessMaterialType((item.material || item.材料 || item.材质 || '').toString()),
+      conf: 'high'
+    })).filter(r => r.no > 0 && r.name).sort((a, b) => a.no - b.no);
+    
+  } catch (e) {
+    console.error('JSON parse error:', e, 'Raw:', jsonStr);
+    return [];
+  }
+}
+
 // Init
 document.getElementById('productType').addEventListener('change', buildCFRefTable);
 document.getElementById('application').addEventListener('change', () => { recalc(); buildCFRefTable(); });
@@ -2979,6 +3306,7 @@ setupDragDrop('structureImgDrop', 'structureImgInput');
 
 buildCFRefTable();
 loadExample();
+loadQwenVlConfig();
 </script>
 </body>
 </html>
