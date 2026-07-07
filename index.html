@@ -656,12 +656,13 @@
   <!-- Structure + BOM -->
   <div class="main-grid">
     <div class="structure-panel">
-      <div class="panel-title">产品结构图 <span>Structure / BOM Drawing</span></div>
-      <div class="img-drop" id="structureImgDrop" onclick="document.getElementById('structureImgInput').click()">
-        <span class="placeholder">点击上传结构图<br><small>（标注零件编号）</small></span>
-        <input type="file" id="structureImgInput" accept="image/*" onchange="previewImg(this,'structureImgDrop')">
+      <div class="panel-title">AI 识别原始 JSON <span>Raw JSON Editor</span></div>
+      <textarea id="rawJsonEditor" style="width:100%;height:320px;padding:.5rem;border:1px solid var(--border);border-radius:4px;font-size:.75rem;font-family:monospace;resize:vertical;box-sizing:border-box;" placeholder="AI 识别完成后，原始 JSON 会显示在这里。&#10;你可以直接编辑修正，然后点击「从 JSON 更新 BOM」。"></textarea>
+      <div style="display:flex;gap:.5rem;margin-top:.5rem;">
+        <button class="btn btn-primary btn-sm" onclick="applyRawJsonToBOM()" style="font-size:.75rem;">🔄 从 JSON 更新 BOM</button>
+        <button class="btn btn-outline btn-sm" onclick="formatRawJson()" style="font-size:.75rem;">✨ 格式化</button>
       </div>
-      <div class="arrow-annotation" style="margin-top:.75rem">↓ Summation Rule：同种主聚合物加总</div>
+      <div class="arrow-annotation" style="margin-top:.5rem">↓ Summation Rule：同种主聚合物加总</div>
     </div>
     <div class="bom-panel">
       <div class="panel-title">Table A7-1 · BOM 物料清单 <span>Bill of Materials</span></div>
@@ -3238,8 +3239,11 @@ async function processWithQwenVL() {
     ocrResults = result;
     renderOCRResults();
     
+    // 把原始结果同步到JSON编辑器（方便用户手动修正）
+    updateRawJsonEditor(result);
+    
     if (validation.errors.length > 0) {
-      progressEl.textContent = `⚠️ AI 识别完成（${result.length} 行），但验证发现 ${validation.errors.length} 个错误。请检查上方红色提示，修正后再填充。`;
+      progressEl.textContent = `⚠️ AI 识别完成（${result.length} 行），但验证发现 ${validation.errors.length} 个错误。请检查上方红色提示，或直接修改左侧 JSON 后点击「从 JSON 更新 BOM」。`;
     } else if (validation.warnings.length > 0) {
       progressEl.textContent = `✅ AI 识别完成（${result.length} 行），有 ${validation.warnings.length} 个警告。请检查上方黄色提示。`;
     } else {
@@ -3501,13 +3505,96 @@ function renderValidationResult(validation) {
   container.style.display = '';
 }
 
+/** 把识别结果同步到JSON编辑器 */
+function updateRawJsonEditor(result) {
+  const editor = document.getElementById('rawJsonEditor');
+  if (!editor) return;
+  // 只保留核心字段，方便用户编辑
+  const simplified = result.map(r => ({
+    no: r.no,
+    name: r.name,
+    qty: r.qty,
+    material: r.material,
+    spec: r.spec
+  }));
+  editor.value = JSON.stringify(simplified, null, 2);
+}
+
+/** 从JSON编辑器内容更新BOM表 */
+function applyRawJsonToBOM() {
+  const editor = document.getElementById('rawJsonEditor');
+  if (!editor || !editor.value.trim()) {
+    alert('JSON 编辑器为空，请先输入或识别数据');
+    return;
+  }
+  
+  try {
+    const items = JSON.parse(editor.value.trim());
+    if (!Array.isArray(items)) {
+      alert('JSON 格式错误：必须是数组');
+      return;
+    }
+    
+    // 映射到ocrResults格式
+    ocrResults = items.map(item => {
+      const no = parseInt(item.no) || 0;
+      const name = (item.name || '').toString().trim();
+      const qty = parseInt(item.qty) || 1;
+      const material = (item.material || '').toString().trim();
+      const spec = (item.spec || '').toString().trim();
+      return {
+        no, code: '', name, material, qty, spec, note: '',
+        area: '', pct: 0,
+        type: guessMaterialType(material),
+        conf: 'high'
+      };
+    }).filter(r => r.no > 0 && r.name).sort((a, b) => a.no - b.no);
+    
+    if (ocrResults.length === 0) {
+      alert('解析后没有有效数据，请检查 JSON 格式');
+      return;
+    }
+    
+    // 验证
+    const validation = validateBOMJson(ocrResults);
+    renderValidationResult(validation);
+    
+    // 渲染结果
+    renderOCRResults();
+    document.getElementById('ocrResultPanel').style.display = '';
+    
+    // 应用
+    applyOCRToBOM();
+    
+    const msg = validation.errors.length > 0 
+      ? `已更新 BOM，但发现 ${validation.errors.length} 个错误，请检查`
+      : `✅ 已从 JSON 更新 BOM，共 ${ocrResults.length} 行`;
+    document.getElementById('ocrProgress').textContent = msg;
+    
+  } catch (e) {
+    alert('JSON 解析失败：' + e.message);
+  }
+}
+
+/** 格式化JSON编辑器内容 */
+function formatRawJson() {
+  const editor = document.getElementById('rawJsonEditor');
+  if (!editor || !editor.value.trim()) return;
+  
+  try {
+    const data = JSON.parse(editor.value.trim());
+    editor.value = JSON.stringify(data, null, 2);
+  } catch (e) {
+    alert('无法格式化：JSON 格式错误');
+  }
+}
+
 // Init
 document.getElementById('productType').addEventListener('change', buildCFRefTable);
 document.getElementById('application').addEventListener('change', () => { recalc(); buildCFRefTable(); });
 document.getElementById('storageApp').addEventListener('change', () => { recalc(); buildCFRefTable(); });
 
 setupDragDrop('productImgDrop', 'productImgInput');
-setupDragDrop('structureImgDrop', 'structureImgInput');
 
 buildCFRefTable();
 loadExample();
