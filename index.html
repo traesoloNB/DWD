@@ -3266,29 +3266,36 @@ async function processWithQwenVL() {
 
 /** 调用阿里云百炼 Qwen-VL API */
 async function callQwenVL(base64Image, apiKey) {
-  const prompt = `你是一个专业的工业BOM爆炸图解析助手。请仔细读取图片中的零件明细表，逐行提取每个零件的信息。
+  const prompt = `你是一个专业的工业BOM表格提取助手。请仔细阅读图片中的零件明细表，提取所有零件信息。
 
-**你的任务：**
-1. 找到图中的零件明细表（通常是表格形式，可能包含序号、名称、规格、数量、材料等列）。
-2. 逐行读取表格中的每一行数据。
-3. 把每行数据转换成一个JSON对象。
+**提取要求（请严格遵守）：**
 
-**输出格式：**
-只输出JSON数组，不要任何解释文字、不要markdown代码块。格式示例：
+1. **按表格从上到下的顺序逐行提取**，不要自己重新排序。
+2. **特别注意数量（Qty）字段的准确性**：
+   - 不要把 2、3、4 等数字误识别成 1。
+   - 如果某一行数量看起来可疑，请更仔细核对该行的数量。
+   - 优先保证数量的准确性。
+3. 每一行必须包含以下字段（没有的字段填空字符串）：
+   - no：序号（必须是纯数字）
+   - name：零件名称
+   - qty：数量（必须准确识别）
+   - material：材料
+   - spec：规格
+
+**输出格式要求：**
+只输出一个 JSON 数组，不要任何解释文字、不要 markdown 代码块。格式如下：
 
 [
-  {"no":1,"name":"壳体","qty":1,"material":"黄铜","spec":"M42X1.25"},
-  {"no":2,"name":"阀芯","qty":1,"material":"陶瓷","spec":"35mm"}
+  {"no":"1","name":"零件名称","qty":"4","material":"材料名称","spec":"规格"},
+  {"no":"2","name":"零件名称","qty":"2","material":"材料名称","spec":"规格"}
 ]
 
-**重要规则：**
-1. 每个对象必须包含这些字段（按顺序）：no（序号）、name（名称）、qty（数量）、material（材料）、spec（规格）。
-2. 如果某个字段在图中没有，填空字符串 ""，不要省略字段。
-3. 字段顺序不重要，但每个对象必须包含这5个字段。
-4. 不要跳过任何一行，即使零件名称相似（多个胶垫、多个O形圈）也要分别输出。
-5. 不要编造图中没有的内容。
-6. 输出的顺序不需要排序，程序会自动按序号排序。
-7. 只输出JSON数组，不要任何其他文字。`;
+**额外注意事项：**
+- 如果表格中有合并单元格或格式特殊，请尽量还原正确内容。
+- 即使你认为顺序可能不对，也请按原图顺序输出，程序会后续处理排序。
+- 请尽量不要遗漏任何一行。
+
+现在开始提取。`;
 
   const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
     method: 'POST',
@@ -3522,17 +3529,31 @@ function validateBOMJson(jsonArray) {
       result.warnings.push(`第${rowNum}行（${name || "未知零件"}）：数量格式错误`);
     }
 
-    // 3. 材料为空警告
+    // 3. 数量值合理性检查
+    const qtyNum = parseInt(qty);
+    if (qtyNum === 1 && name) {
+      // 标记数量为1的行，后续做全局分析
+      if (!window._qtyOneRows) window._qtyOneRows = [];
+      window._qtyOneRows.push({rowNum, name, no});
+    }
+
+    // 4. 材料为空警告
     if (!material || material.trim() === "") {
       result.warnings.push(`第${rowNum}行（${name || "未知零件"}）：材料为空`);
     }
 
-    // 4. 规格合理性检查：如果规格列含有明显材料关键词，警告
+    // 5. 规格合理性检查：如果规格列含有明显材料关键词，警告
     if (spec && MATERIAL_KEYWORDS.some(kw => spec.includes(kw)) && 
         !SPEC_KEYWORDS.some(kw => spec.toUpperCase().includes(kw.toUpperCase()))) {
       result.warnings.push(`第${rowNum}行（${name || "未知零件"}）：规格"${spec}"疑似是材料，可能需要互换`);
     }
   });
+
+  // 全局数量分析：如果所有行数量都是1，且行数多于5，警告
+  const allQtyOne = jsonArray.every(item => parseInt(item.qty) === 1);
+  if (allQtyOne && jsonArray.length > 5) {
+    result.warnings.push(`全部 ${jsonArray.length} 行数量都是 "1"，请检查是否遗漏了实际数量 >1 的零件`);
+  }
 
   if (correctedCount > 0) {
     result.warnings.unshift(`🔄 自动纠正了 ${correctedCount} 处规格/材料字段错位（请确认是否正确）`);
