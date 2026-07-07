@@ -3255,29 +3255,29 @@ async function processWithQwenVL() {
 
 /** 调用阿里云百炼 Qwen-VL API */
 async function callQwenVL(base64Image, apiKey) {
-  const prompt = `你是一个专业的工业BOM表格文字识别助手。你的任务是：把图片中看到的零件明细表，逐行读取出来。
+  const prompt = `你是一个专业的工业BOM爆炸图解析助手。请仔细读取图片中的零件明细表，逐行提取每个零件的信息。
 
-**重要说明：**
-- 你不需要理解表格结构，也不需要判断哪行对应哪个零件。
-- 你只需要做一件事：把图中表格的每一行，按从左到右的顺序，把每个单元格的文字读出来。
-- 即使表格是倒着排列的（表头在底部），也请你把所有数据行都读出来。
+**你的任务：**
+1. 找到图中的零件明细表（通常是表格形式，可能包含序号、名称、规格、数量、材料等列）。
+2. 逐行读取表格中的每一行数据。
+3. 把每行数据转换成一个JSON对象。
 
-**输出格式（CSV，逗号分隔）：**
-只输出CSV格式的文本，不要任何解释、不要markdown代码块。格式：
+**输出格式：**
+只输出JSON数组，不要任何解释文字、不要markdown代码块。格式示例：
 
-no,name,qty,material,spec
-1,零件名称,1,材料,规格
-2,零件名称,1,材料,规格
-...
+[
+  {"no":1,"name":"壳体","qty":1,"material":"黄铜","spec":"M42X1.25"},
+  {"no":2,"name":"阀芯","qty":1,"material":"陶瓷","spec":"35mm"}
+]
 
-**规则：**
-1. 第一行必须是表头：no,name,qty,material,spec
-2. 从第二行开始，每行一个零件，按图中表格的实际顺序输出（不用排序）。
-3. 每行5个字段，用英文逗号分隔。如果某个字段为空，留空（如：1,零件A,1,,）。
-4. 字段内部如果包含逗号，用双引号包裹（如："不锈钢,304"）。
-5. 不要跳过任何一行，即使零件名称相似也要分别输出。
-6. 不要编造图中没有的内容。
-7. 只输出CSV，不要其他任何文字。`;
+**重要规则：**
+1. 每个对象必须包含这些字段（按顺序）：no（序号）、name（名称）、qty（数量）、material（材料）、spec（规格）。
+2. 如果某个字段在图中没有，填空字符串 ""，不要省略字段。
+3. 字段顺序不重要，但每个对象必须包含这5个字段。
+4. 不要跳过任何一行，即使零件名称相似（多个胶垫、多个O形圈）也要分别输出。
+5. 不要编造图中没有的内容。
+6. 输出的顺序不需要排序，程序会自动按序号排序。
+7. 只输出JSON数组，不要任何其他文字。`;
 
   const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
     method: 'POST',
@@ -3313,110 +3313,83 @@ no,name,qty,material,spec
   return parseQwenVLResult(content);
 }
 
-/** 解析Qwen-VL返回的CSV文本 */
+/** 解析Qwen-VL返回的JSON文本 */
 function parseQwenVLResult(text) {
   if (!text) return [];
   
-  // 提取CSV内容（去掉可能的markdown代码块标记）
-  let csvText = text.trim();
-  const codeBlock = csvText.match(/```(?:csv)?\s*([\s\S]*?)```/);
+  // 尝试提取JSON数组
+  let jsonStr = '';
+  
+  // 方法1: 找 ```json ... ``` 代码块
+  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlock) {
-    csvText = codeBlock[1].trim();
+    jsonStr = codeBlock[1].trim();
+  } else {
+    // 方法2: 找 [ ... ] 数组（匹配最外层方括号）
+    const arrayMatch = text.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      jsonStr = arrayMatch[0];
+    } else {
+      // 方法3: 整个文本就是JSON
+      jsonStr = text.trim();
+    }
   }
   
-  // 按行分割
-  const lines = csvText.split(/\r?\n/).filter(line => line.trim());
-  if (lines.length < 2) return []; // 至少需要表头+一行数据
-  
-  // 跳过表头行，解析数据行
-  const results = [];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
+  try {
+    const items = JSON.parse(jsonStr);
+    if (!Array.isArray(items)) return [];
     
-    // 跳过表头行
-    if (i === 0 && /no\s*,\s*name/i.test(line)) continue;
-    
-    // 解析CSV行（简单处理：按逗号分割，支持引号包裹）
-    const fields = parseCSVLine(line);
-    if (fields.length < 2) continue;
-    
-    // 提取字段
-    const noStr = fields[0] ? fields[0].trim() : '';
-    const name = fields[1] ? fields[1].trim() : '';
-    const qtyStr = fields[2] ? fields[2].trim() : '1';
-    const material = fields[3] ? fields[3].trim() : '';
-    const spec = fields[4] ? fields[4].trim() : '';
-    
-    // 提取序号中的数字
-    let no = 0;
-    const numMatch = noStr.match(/^(\d+)/);
-    if (numMatch) {
-      no = parseInt(numMatch[1]);
-    } else {
-      no = parseInt(noStr) || 0;
-    }
-    
-    // 提取数量
-    let qty = 1;
-    const qtyMatch = qtyStr.match(/^(\d+)/);
-    if (qtyMatch) {
-      qty = parseInt(qtyMatch[1]);
-    } else {
-      qty = parseInt(qtyStr) || 1;
-    }
-    
-    if (no > 0 && name) {
-      results.push({
-        no, code: '', name, material, qty, spec, note: '',
+    // 映射到ocrResults格式
+    const results = items.map(item => {
+      // 处理 no 字段：提取纯数字
+      let noVal = item.no || item.序号 || item.id || item.ID || item.No || item.NO || '';
+      let no = 0;
+      if (typeof noVal === 'string') {
+        const numMatch = noVal.match(/^(\d+)/);
+        no = numMatch ? parseInt(numMatch[1]) : 0;
+      } else {
+        no = parseInt(noVal) || 0;
+      }
+      
+      // 处理 qty 字段
+      let qtyVal = item.qty || item.数量 || item.件数 || item.Qty || item.QTY || 1;
+      let qty = 1;
+      if (typeof qtyVal === 'string') {
+        const numMatch = qtyVal.match(/^(\d+)/);
+        qty = numMatch ? parseInt(numMatch[1]) : 1;
+      } else {
+        qty = parseInt(qtyVal) || 1;
+      }
+      
+      const name = (item.name || item.品名 || item.名称 || item.零件名称 || item.description || item.part_name || '').toString().trim();
+      const material = (item.material || item.材料 || item.材质 || item.mat || item.Material || '').toString().trim();
+      const code = (item.part_no || item.品号 || item.编号 || item.代号 || item.part_number || item.code || item.Code || '').toString().trim();
+      const spec = (item.spec || item.规格 || item.型号 || item.尺寸 || item.specification || '').toString().trim();
+      const note = (item.note || item.备注 || item.说明 || item.remark || '').toString().trim();
+      
+      return {
+        no, code, name, material, qty, spec, note,
         area: '', pct: 0,
         type: guessMaterialType(material),
         conf: 'high'
-      });
-    }
-  }
-  
-  // 去重：相同序号的只保留第一个
-  const seen = new Set();
-  const unique = results.filter(r => {
-    if (seen.has(r.no)) return false;
-    seen.add(r.no);
-    return true;
-  });
-  
-  // 按序号排序
-  return unique.sort((a, b) => a.no - b.no);
-}
-
-/** 解析单行CSV（支持引号包裹的字段） */
-function parseCSVLine(line) {
-  const fields = [];
-  let current = '';
-  let inQuotes = false;
-  
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
+      };
+    }).filter(r => r.no > 0 && r.name);
     
-    if (char === '"') {
-      if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
-        // 转义引号
-        current += '"';
-        i++; // 跳过下一个引号
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === ',' && !inQuotes) {
-      fields.push(current.trim());
-      current = '';
-    } else {
-      current += char;
-    }
+    // 去重：相同序号的只保留第一个
+    const seen = new Set();
+    const unique = results.filter(r => {
+      if (seen.has(r.no)) return false;
+      seen.add(r.no);
+      return true;
+    });
+    
+    // 按序号排序（程序负责排序，AI不用管）
+    return unique.sort((a, b) => a.no - b.no);
+    
+  } catch (e) {
+    console.error('JSON parse error:', e, 'Raw:', jsonStr);
+    return [];
   }
-  
-  // 最后一个字段
-  fields.push(current.trim());
-  return fields;
 }
 
 /** ═══════════════════════════════════════════════
