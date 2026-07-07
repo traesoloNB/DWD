@@ -562,6 +562,8 @@
         <div class="ocr-result-header">
           <span>识别结果 — 请检查并确认</span>
         </div>
+        <!-- 验证结果面板 -->
+        <div id="ocrValidationPanel" style="display:none;margin:.5rem 0;"></div>
         <div class="ocr-result-body" id="ocrResultBody"></div>
         <div class="ocr-actions">
           <button class="btn btn-outline btn-sm" onclick="clearOCR()">清空</button>
@@ -2692,6 +2694,7 @@ function clearOCR() {
   ocrSelections = [];
   ocrCurrentSelection = null;
   document.getElementById('ocrResultPanel').style.display = 'none';
+  document.getElementById('ocrValidationPanel').style.display = 'none';
   document.getElementById('ocrFallbackPanel').style.display = 'none';
   document.getElementById('ocrSelectionArea').style.display = 'none';
   document.getElementById('ocrProgress').textContent = '';
@@ -3228,9 +3231,20 @@ async function processWithQwenVL() {
       return;
     }
     
+    // 验证AI输出
+    const validation = validateBOMJson(result);
+    renderValidationResult(validation);
+    
     ocrResults = result;
     renderOCRResults();
-    progressEl.textContent = '✅ AI 识别完成，共 ' + result.length + ' 个零件。请检查确认后点击「确认并填充到 BOM」';
+    
+    if (validation.errors.length > 0) {
+      progressEl.textContent = `⚠️ AI 识别完成（${result.length} 行），但验证发现 ${validation.errors.length} 个错误。请检查上方红色提示，修正后再填充。`;
+    } else if (validation.warnings.length > 0) {
+      progressEl.textContent = `✅ AI 识别完成（${result.length} 行），有 ${validation.warnings.length} 个警告。请检查上方黄色提示。`;
+    } else {
+      progressEl.textContent = '✅ AI 识别完成，共 ' + result.length + ' 个零件，验证通过。请检查确认后点击「确认并填充到 BOM」';
+    }
     resultPanel.style.display = '';
     
   } catch (err) {
@@ -3241,31 +3255,34 @@ async function processWithQwenVL() {
 
 /** 调用阿里云百炼 Qwen-VL API */
 async function callQwenVL(base64Image, apiKey) {
-  const prompt = `你是一个非常严谨的工业BOM表格提取专家。请仔细、逐行阅读图片中的零件明细表，绝对不要遗漏任何一行。
+  const prompt = `你是一个专业的工业BOM爆炸图解析专家，特别擅长处理水暖阀门、龙头、角阀等产品的工程图纸和零件明细。
 
-**提取要求（必须严格遵守）：**
+请仔细分析上传的图片，提取所有零件信息。
 
-1. 先整体数一下表格里一共有多少行数据（不含表头），然后再开始提取。
-2. 按照表格从上到下的顺序，逐行提取每一行数据。
-3. 即使零件名称相似（比如多个胶垫、多个O形圈、多个快开阀芯），也要作为独立行分别提取，不要合并。
-4. 输出必须是严格的 JSON 数组，不要任何多余文字、不要解释、不要 markdown。
+**输出要求（必须严格遵守）：**
+只输出一个 JSON 数组，不要任何解释文字、不要 markdown 代码块、不要多余内容。格式如下：
 
-**每个对象必须包含以下字段**（没有的字段填空字符串）：
 [
   {
-    "no": "序号（纯数字）",
+    "no": "序号（纯数字，如 1、2、3）",
     "part_no": "零件编号（如果有）",
-    "name": "零件名称",
+    "name": "零件名称或描述",
     "qty": "数量（必须是数字）",
-    "material": "材料",
-    "spec": "规格（如果有）"
+    "material": "材料名称（如黄铜、POM、不锈钢、塑料等，如果图中可见）",
+    "spec": "规格或型号（如果有）",
+    "note": "其他备注（可选）"
   }
 ]
 
-**额外严格要求：**
-- 不要跳过任何一行。
-- 提取完成后，请在最后再检查一次是否和表格行数一致。
-- 优先保证完整性，其次才是字段准确。
+**处理规则：**
+1. 优先识别图中的气泡标注（带数字的圆圈）和引线指向的零件，把气泡数字作为 no。
+2. 如果同时存在爆炸图和单独的零件明细表，优先以明细表为准，并尽量把气泡数字和明细表对应上。
+3. 数量要准确提取，注意 Qty>1 的情况。
+4. 材料尽量识别常见水暖材料（黄铜、不锈钢、POM、PTFE、EPDM、NBR 等），识别不出来就留空。
+5. 如果某个字段看不清或不确定，尽量填写你能确定的部分，不要编造。
+6. 按零件在图中出现的合理顺序排列（通常按气泡数字或表格顺序）。
+7. 只提取实际存在的零件，不要添加额外内容。
+8. 即使零件名称相似（多个胶垫、多个O形圈、多个快开阀芯），也要作为独立行分别提取，不要合并或跳过。
 
 请严格按照 JSON 数组格式输出。`;
 
@@ -3379,6 +3396,115 @@ function parseQwenVLResult(text) {
     console.error('JSON parse error:', e, 'Raw:', jsonStr);
     return [];
   }
+}
+
+/** ═══════════════════════════════════════════════
+   BOM JSON 验证（Qwen-VL 等模型输出后使用）
+   ═══════════════════════════════════════════════ */
+function validateBOMJson(jsonArray) {
+  const result = {
+    isValid: true,
+    errors: [],
+    warnings: [],
+    cleanedData: []
+  };
+
+  if (!Array.isArray(jsonArray) || jsonArray.length === 0) {
+    result.errors.push("AI 未返回有效数据");
+    result.isValid = false;
+    return result;
+  }
+
+  const numbers = [];
+  const nameCount = {};
+
+  jsonArray.forEach((item, index) => {
+    const rowNum = index + 1;
+    const no = item.no;
+    const name = item.name || "";
+    const qty = item.qty;
+    const material = item.material || "";
+
+    // 1. 序号必须是纯数字
+    if (no === undefined || no === null || no === "") {
+      result.errors.push(`第${rowNum}行：序号为空`);
+      result.isValid = false;
+    } else if (!/^\d+$/.test(String(no).trim())) {
+      result.errors.push(`第${rowNum}行：序号格式错误（"${no}" 不是纯数字）`);
+      result.isValid = false;
+    } else {
+      const num = parseInt(no);
+      numbers.push(num);
+      if (name) {
+        nameCount[name] = (nameCount[name] || 0) + 1;
+      }
+    }
+
+    // 2. 数量必须是有效数字
+    if (qty === undefined || qty === null || qty === "") {
+      result.warnings.push(`第${rowNum}行（${name || "未知零件"}）：数量为空`);
+    } else if (isNaN(parseInt(qty))) {
+      result.warnings.push(`第${rowNum}行（${name || "未知零件"}）：数量格式错误`);
+    }
+
+    // 3. 材料为空警告
+    if (!material || material.trim() === "") {
+      result.warnings.push(`第${rowNum}行（${name || "未知零件"}）：材料为空`);
+    }
+  });
+
+  // 4. 检查序号是否连续
+  if (numbers.length > 0) {
+    const minNo = Math.min(...numbers);
+    const maxNo = Math.max(...numbers);
+    const expectedCount = maxNo - minNo + 1;
+    if (numbers.length !== expectedCount) {
+      result.warnings.push(`序号不连续：检测到 ${numbers.length} 行，但序号范围是 ${minNo}~${maxNo}，可能漏掉了某些行`);
+      result.isValid = false;
+    }
+  }
+
+  // 5. 检测重复名称 + 序号跳号
+  Object.keys(nameCount).forEach(name => {
+    if (nameCount[name] > 1) {
+      result.warnings.push(`零件「${name}」出现了 ${nameCount[name]} 次，如果原图中有多个，建议检查是否被合并`);
+    }
+  });
+
+  // 6. 总体行数提醒
+  if (jsonArray.length < 10) {
+    result.warnings.push(`当前只识别到 ${jsonArray.length} 行，建议确认是否漏识别（典型龙头爆炸图通常在15-25行）`);
+  }
+
+  return result;
+}
+
+/** 渲染验证结果到UI */
+function renderValidationResult(validation) {
+  const container = document.getElementById('ocrValidationPanel');
+  if (!container) return;
+  
+  let html = '';
+  if (validation.errors.length > 0) {
+    html += `<div style="background:#ffebee;border:1px solid #ef9a9a;border-radius:4px;padding:.5rem .75rem;margin-bottom:.5rem;">
+      <div style="font-weight:600;color:#c62828;font-size:.85rem;margin-bottom:.3rem;">❌ 发现 ${validation.errors.length} 个错误，建议修正后再填充</div>
+      ${validation.errors.map(e => `<div style="font-size:.78rem;color:#b71c1c;padding:.15rem 0;">• ${e}</div>`).join('')}
+    </div>`;
+  }
+  if (validation.warnings.length > 0) {
+    html += `<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:4px;padding:.5rem .75rem;">
+      <div style="font-weight:600;color:#e65100;font-size:.85rem;margin-bottom:.3rem;">⚠️ 发现 ${validation.warnings.length} 个警告</div>
+      ${validation.warnings.map(w => `<div style="font-size:.78rem;color:#e65100;padding:.15rem 0;">• ${w}</div>`).join('')}
+    </div>`;
+  }
+  if (validation.errors.length === 0 && validation.warnings.length === 0) {
+    html += `<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:4px;padding:.5rem .75rem;">
+      <div style="font-weight:600;color:#2e7d32;font-size:.85rem;">✅ 验证通过，未发现问题</div>
+    </div>`;
+  }
+  
+  container.innerHTML = html;
+  container.style.display = '';
 }
 
 // Init
