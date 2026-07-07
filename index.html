@@ -3404,8 +3404,66 @@ function parseQwenVLResult(text) {
 }
 
 /** ═══════════════════════════════════════════════
-   BOM JSON 验证（Qwen-VL 等模型输出后使用）
+   BOM JSON 字段纠错 + 验证
    ═══════════════════════════════════════════════ */
+
+// 常见材料关键词（用于判断字段是否被错位）
+const MATERIAL_KEYWORDS = [
+  '黄铜', '铜棒', '铜', '不锈钢', 'SUS', 'sus', '201', '304', '316',
+  '塑料', 'ABS', 'POM', 'PTFE', 'EPDM', 'NBR', '硅胶', '橡胶',
+  '陶瓷', '无铅铜', '锌合金', '铅', '铁', '铝', '尼龙', 'PP',
+  'PC', 'PA', 'PVC', 'PE', '不锈钢SUS', 'SUS201', 'SUS304',
+  '铜+塑料', '铜+陶瓷', '无铅铜+塑料', '无铅铜+塑料+陶瓷',
+  '组件', '铜材', '钢材', '铬', '碳钢'
+];
+
+// 常见规格关键词（用于判断字段是否被错位）
+const SPEC_KEYWORDS = [
+  'M4', 'M5', 'M6', 'M8', 'M10', 'M12', 'M16', 'M20', 'M25', 'M28', 'M30', 'M32', 'M35', 'M40', 'M42',
+  '∅', 'Ø', 'φ', 'Φ', '⌀',
+  'X', 'x',  // 如 M4X30, ∅24X18.5
+  '1/2', '3/4', '3/8', '1/4',
+  'DN15', 'DN20', 'DN25', 'G1/2', 'G3/4',
+  'CM', 'cm', 'mm',
+  '牙', '螺丝', '螺母'
+];
+
+/**
+ * 检测并自动纠正 spec 和 material 字段错位
+ * 规则：如果 material 的值看起来像规格（含M、X、∅等），且 spec 的值看起来像材料（含铜、不锈钢等），则互换
+ */
+function autoCorrectFields(item) {
+  const material = (item.material || '').toString().trim();
+  const spec = (item.spec || '').toString().trim();
+  
+  if (!material || !spec) return item;
+  
+  // material 看起来像规格？
+  const materialLooksLikeSpec = SPEC_KEYWORDS.some(kw => material.toUpperCase().includes(kw.toUpperCase())) 
+    && !MATERIAL_KEYWORDS.some(kw => material.includes(kw));
+  
+  // spec 看起来像材料？
+  const specLooksLikeMaterial = MATERIAL_KEYWORDS.some(kw => spec.includes(kw))
+    && !SPEC_KEYWORDS.some(kw => {
+      // 排除既是材料又是规格的模糊情况（如含X的材料名）
+      if (kw === 'X' || kw === 'x') return false;
+      return spec.toUpperCase().includes(kw.toUpperCase());
+    });
+  
+  if (materialLooksLikeSpec && specLooksLikeMaterial) {
+    console.log(`字段纠错：${item.name} - 规格"${spec}"和材料"${material}"疑似互换，已自动纠正`);
+    return { ...item, material: spec, spec: material, _corrected: true };
+  }
+  
+  // 单独检查：material里如果含有明显的规格模式但没有材料关键词
+  if (materialLooksLikeSpec && !MATERIAL_KEYWORDS.some(kw => material.includes(kw))) {
+    console.log(`字段纠错：${item.name} - 材料"${material}"疑似应为规格，已移到规格列`);
+    return { ...item, material: '', spec: material, _corrected: true };
+  }
+  
+  return item;
+}
+
 function validateBOMJson(jsonArray) {
   const result = {
     isValid: true,
@@ -3422,6 +3480,7 @@ function validateBOMJson(jsonArray) {
 
   const numbers = [];
   const nameCount = {};
+  let correctedCount = 0;
 
   jsonArray.forEach((item, index) => {
     const rowNum = index + 1;
@@ -3429,6 +3488,17 @@ function validateBOMJson(jsonArray) {
     const name = item.name || "";
     const qty = item.qty;
     const material = item.material || "";
+    const spec = item.spec || "";
+
+    // 0. 先做字段纠错
+    const corrected = autoCorrectFields(item);
+    if (corrected._corrected) {
+      correctedCount++;
+      // 把纠正后的值写回原数组
+      jsonArray[index].material = corrected.material;
+      jsonArray[index].spec = corrected.spec;
+      delete corrected._corrected;
+    }
 
     // 1. 序号必须是纯数字
     if (no === undefined || no === null || no === "") {
@@ -3456,9 +3526,19 @@ function validateBOMJson(jsonArray) {
     if (!material || material.trim() === "") {
       result.warnings.push(`第${rowNum}行（${name || "未知零件"}）：材料为空`);
     }
+
+    // 4. 规格合理性检查：如果规格列含有明显材料关键词，警告
+    if (spec && MATERIAL_KEYWORDS.some(kw => spec.includes(kw)) && 
+        !SPEC_KEYWORDS.some(kw => spec.toUpperCase().includes(kw.toUpperCase()))) {
+      result.warnings.push(`第${rowNum}行（${name || "未知零件"}）：规格"${spec}"疑似是材料，可能需要互换`);
+    }
   });
 
-  // 4. 检查序号是否连续
+  if (correctedCount > 0) {
+    result.warnings.unshift(`🔄 自动纠正了 ${correctedCount} 处规格/材料字段错位（请确认是否正确）`);
+  }
+
+  // 5. 检查序号是否连续
   if (numbers.length > 0) {
     const minNo = Math.min(...numbers);
     const maxNo = Math.max(...numbers);
@@ -3469,14 +3549,14 @@ function validateBOMJson(jsonArray) {
     }
   }
 
-  // 5. 检测重复名称 + 序号跳号
+  // 6. 检测重复名称 + 序号跳号
   Object.keys(nameCount).forEach(name => {
     if (nameCount[name] > 1) {
       result.warnings.push(`零件「${name}」出现了 ${nameCount[name]} 次，如果原图中有多个，建议检查是否被合并`);
     }
   });
 
-  // 6. 总体行数提醒
+  // 7. 总体行数提醒
   if (jsonArray.length < 10) {
     result.warnings.push(`当前只识别到 ${jsonArray.length} 行，建议确认是否漏识别（典型龙头爆炸图通常在15-25行）`);
   }
