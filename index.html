@@ -3080,8 +3080,8 @@ async function renderPdfPages(file) {
       const ctx = canvas.getContext('2d');
       await page.render({canvasContext: ctx, viewport}).promise;
       
-      // 保存页面数据
-      const fullViewport = page.getViewport({scale: 2.0});
+      // 保存页面数据 — 使用高分辨率渲染（scale 3.0，确保小字体清晰）
+      const fullViewport = page.getViewport({scale: 3.0});
       qwenVlPdfPages.push({pageNum: i, viewport: fullViewport, pdf});
       
       // 创建缩略图
@@ -3147,7 +3147,7 @@ async function processWithQwenVL() {
         canvas.height = pageData.viewport.height;
         const ctx = canvas.getContext('2d');
         await page.render({canvasContext: ctx, viewport: pageData.viewport}).promise;
-        base64Image = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+        base64Image = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
       } else {
         // 回退到pdfToImage
         const imageUrl = await pdfToImage(lastOcrFile);
@@ -3157,7 +3157,7 @@ async function processWithQwenVL() {
         canvas.height = img.height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0);
-        base64Image = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+        base64Image = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
       }
     } else {
       // 图片文件
@@ -3168,7 +3168,7 @@ async function processWithQwenVL() {
       canvas.height = img.height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0);
-      base64Image = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+      base64Image = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
     }
     
     progressEl.textContent = '⏳ AI 正在分析爆炸图，请稍候...';
