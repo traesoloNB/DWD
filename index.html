@@ -672,6 +672,7 @@
             <tr>
               <th class="col-narrow">No.</th>
               <th>PART</th>
+              <th class="col-md">规格 SPEC</th>
               <th class="col-sm">Qty</th>
               <th>MATERIAL</th>
               <th class="col-sm">类型</th>
@@ -685,7 +686,7 @@
           <tbody id="bomBody"></tbody>
           <tfoot>
             <tr class="total-row">
-              <td colspan="5">TOTAL</td>
+              <td colspan="6">TOTAL</td>
               <td id="totalAreaCell">—</td>
               <td id="totalPctCell">—</td>
               <td colspan="3"></td>
@@ -890,6 +891,7 @@ function addRow(count = 1) {
     tr.innerHTML = `
       <td><input type="number" class="part-no" value="${rowId}" min="1" style="width:42px" oninput="recalc()"></td>
       <td><input type="text" class="part-name" placeholder="零件名" oninput="recalc()"></td>
+      <td><input type="text" class="part-spec" placeholder="规格" oninput="recalc()"></td>
       <td><input type="number" class="part-qty" value="1" min="1" step="1" oninput="recalc()"></td>
       <td><input type="text" class="part-mat" placeholder="Plastics 1" oninput="recalc()"></td>
       <td>
@@ -932,6 +934,7 @@ function getRows() {
       tr,
       no: tr.querySelector('.part-no').value,
       name: tr.querySelector('.part-name').value,
+      spec: tr.querySelector('.part-spec').value.trim(),
       qty,
       mat: tr.querySelector('.part-mat').value.trim(),
       type: tr.querySelector('.part-type').value,
@@ -2661,6 +2664,7 @@ function renderOCRResults() {
         <input type="number" class="ocr-num" value="${r.no}" min="1" onchange="updateOCR(${i},'no',this.value)" style="width:50px;text-align:center;border:1px solid var(--border);border-radius:4px;padding:.15rem .3rem;font-size:.8rem;">
         <input type="text" value="${r.code}" placeholder="物料编码" onchange="updateOCR(${i},'code',this.value)" style="min-width:90px;flex:0.8;">
         <input type="text" value="${r.name}" placeholder="零件名" onchange="updateOCR(${i},'name',this.value)">
+        <input type="text" value="${r.spec || ''}" placeholder="规格" onchange="updateOCR(${i},'spec',this.value)" style="min-width:80px;">
         <input type="number" value="${r.qty}" min="1" onchange="updateOCR(${i},'qty',this.value)" style="max-width:50px">
         <input type="text" value="${r.material}" placeholder="材料" onchange="updateOCR(${i},'material',this.value)">
         <select onchange="updateOCR(${i},'type',this.value)">
@@ -2739,6 +2743,7 @@ function applyOCRToBOM() {
     const tr = document.querySelector('#bomBody tr:last-child');
     tr.querySelector('.part-no').value = r.no;
     tr.querySelector('.part-name').value = r.name;
+    tr.querySelector('.part-spec').value = r.spec || '';
     tr.querySelector('.part-qty').value = r.qty;
     tr.querySelector('.part-mat').value = r.material;
     tr.querySelector('.part-type').value = r.type;
@@ -2905,11 +2910,12 @@ function loadExample() {
   colorIdx = 0;
   Object.keys(MAT_COLORS).forEach(k => delete MAT_COLORS[k]);
 
-  example.forEach(([no, name, qty, mat, type, area, pct]) => {
+  example.forEach(([no, name, qty, mat, type, area, pct, spec]) => {
     addRow();
     const tr = document.querySelector('#bomBody tr:last-child');
     tr.querySelector('.part-no').value = no;
     tr.querySelector('.part-name').value = name;
+    tr.querySelector('.part-spec').value = spec || '';
     tr.querySelector('.part-qty').value = qty;
     tr.querySelector('.part-mat').value = mat;
     tr.querySelector('.part-type').value = type;
@@ -2952,11 +2958,12 @@ function loadKitchenFaucetExample() {
   colorIdx = 0;
   Object.keys(MAT_COLORS).forEach(k => delete MAT_COLORS[k]);
 
-  example.forEach(([no, name, qty, mat, type, area, pct]) => {
+  example.forEach(([no, name, qty, mat, type, area, pct, spec]) => {
     addRow();
     const tr = document.querySelector('#bomBody tr:last-child');
     tr.querySelector('.part-no').value = no;
     tr.querySelector('.part-name').value = name;
+    tr.querySelector('.part-spec').value = spec || '';
     tr.querySelector('.part-qty').value = qty;
     tr.querySelector('.part-mat').value = mat;
     tr.querySelector('.part-type').value = type;
