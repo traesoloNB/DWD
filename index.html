@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DWD RG 风险等级计算器</title>
-  <script src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'></script>
+  <script src='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.269/build/pdf.min.js'></script>
   <style>
     :root {
       --bg: #f0f4f8;
@@ -3003,11 +3003,78 @@ function setupDragDrop(dropId, inputId) {
 }
 
 /* ═══════════════════════════════════════════════
+   PDF.js Worker 初始化
+   ═══════════════════════════════════════════════ */
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.269/build/pdf.worker.min.js';
+}
+
+/**
+ * 将 PDF 文件转换为图片数组
+ * @param {File} file - PDF 文件
+ * @param {Object} options - 配置项
+ * @param {number} options.scale - 渲染倍率，默认 2.0
+ * @param {number} options.maxPages - 最多转换多少页，默认 5
+ * @returns {Promise<Array<{pageNumber: number, dataUrl: string}>>}
+ */
+async function convertPdfToImages(file, options = {}) {
+  const { scale = 2.0, maxPages = 5 } = options;
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = async function(e) {
+      try {
+        const typedarray = new Uint8Array(e.target.result);
+        const pdf = await pdfjsLib.getDocument({ data: typedarray }).promise;
+        
+        const totalPages = pdf.numPages;
+        const pagesToProcess = Math.min(totalPages, maxPages);
+        const images = [];
+
+        for (let i = 1; i <= pagesToProcess; i++) {
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale });
+
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d', { alpha: false });
+          
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+
+          await page.render({
+            canvasContext: context,
+            viewport: viewport
+          }).promise;
+
+          const dataUrl = canvas.toDataURL('image/png', 0.95);
+          
+          images.push({
+            pageNumber: i,
+            dataUrl: dataUrl,
+            width: canvas.width,
+            height: canvas.height
+          });
+        }
+
+        resolve(images);
+      } catch (error) {
+        console.error('PDF 转图片失败:', error);
+        reject(new Error('PDF 转换失败: ' + error.message));
+      }
+    };
+
+    reader.onerror = () => reject(new Error('读取 PDF 文件失败'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/* ═══════════════════════════════════════════════
    Qwen-VL AI 智能提取
    ═══════════════════════════════════════════════ */
 
 let qwenVlSelectedPage = 0;
-let qwenVlPdfPages = [];
+let qwenVlPdfImages = [];
 
 function toggleQwenVlConfig() {
   const body = document.getElementById('qwenVlConfigBody');
@@ -3065,33 +3132,22 @@ async function renderPdfPages(file) {
   const container = document.getElementById('pdfPageThumbnails');
   const selector = document.getElementById('pdfPageSelector');
   container.innerHTML = '';
-  qwenVlPdfPages = [];
+  qwenVlPdfImages = [];
   
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+    // 使用健壮的 convertPdfToImages 转换PDF
+    const images = await convertPdfToImages(file, { scale: 2.0, maxPages: 5 });
+    qwenVlPdfImages = images;
     
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({scale: 0.3});
-      const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d');
-      await page.render({canvasContext: ctx, viewport}).promise;
-      
-      // 保存页面数据 — 使用高分辨率渲染（scale 3.0，确保小字体清晰）
-      const fullViewport = page.getViewport({scale: 3.0});
-      qwenVlPdfPages.push({pageNum: i, viewport: fullViewport, pdf});
-      
-      // 创建缩略图
+    // 创建缩略图
+    images.forEach((img, index) => {
       const thumb = document.createElement('div');
       thumb.style.cssText = 'flex-shrink:0;width:120px;height:auto;border:2px solid #ddd;border-radius:4px;overflow:hidden;cursor:pointer;position:relative;';
-      thumb.dataset.page = i - 1;
-      thumb.innerHTML = `<img src="${canvas.toDataURL()}" style="width:100%;display:block;"><div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.6);color:#fff;text-align:center;font-size:.7rem;padding:2px;">第${i}页</div>`;
-      thumb.onclick = () => selectPdfPage(i - 1);
+      thumb.dataset.page = index;
+      thumb.innerHTML = `<img src="${img.dataUrl}" style="width:100%;display:block;"><div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.6);color:#fff;text-align:center;font-size:.7rem;padding:2px;">第${img.pageNumber}页</div>`;
+      thumb.onclick = () => selectPdfPage(index);
       container.appendChild(thumb);
-    }
+    });
     
     // 默认选中第一页
     selectPdfPage(0);
@@ -3138,26 +3194,19 @@ async function processWithQwenVL() {
     
     if (lastOcrFile.type === 'application/pdf') {
       progressEl.textContent = '⏳ 正在渲染PDF页面...';
-      // 如果有PDF页面数据，渲染选中的页面
-      if (qwenVlPdfPages.length > 0 && qwenVlSelectedPage < qwenVlPdfPages.length) {
-        const pageData = qwenVlPdfPages[qwenVlSelectedPage];
-        const page = await pageData.pdf.getPage(pageData.pageNum);
-        const canvas = document.createElement('canvas');
-        canvas.width = pageData.viewport.width;
-        canvas.height = pageData.viewport.height;
-        const ctx = canvas.getContext('2d');
-        await page.render({canvasContext: ctx, viewport: pageData.viewport}).promise;
-        base64Image = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
+      // 如果有PDF页面数据，直接使用已转换的图片
+      if (qwenVlPdfImages.length > 0 && qwenVlSelectedPage < qwenVlPdfImages.length) {
+        const imgData = qwenVlPdfImages[qwenVlSelectedPage];
+        base64Image = imgData.dataUrl.split(',')[1];
       } else {
-        // 回退到pdfToImage
-        const imageUrl = await pdfToImage(lastOcrFile);
-        const img = await loadImage(imageUrl);
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        base64Image = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
+        // 回退：实时转换PDF
+        progressEl.textContent = '⏳ 正在转换PDF...';
+        const images = await convertPdfToImages(lastOcrFile, { scale: 2.0, maxPages: 1 });
+        if (images.length > 0) {
+          base64Image = images[0].dataUrl.split(',')[1];
+        } else {
+          throw new Error('PDF转换失败');
+        }
       }
     } else {
       // 图片文件
