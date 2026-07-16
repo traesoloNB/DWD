@@ -804,15 +804,78 @@
   <header>
     <div>
       <h1>CUPC+报价计算器</h1>
-      <p>功能开发中，敬请期待</p>
+      <p>IAPMO 美国认证费用自动核算 · 2026年1月1日起生效</p>
     </div>
   </header>
   <main style="max-width:1400px;margin:0 auto;padding:1.25rem;">
-    <div style="background:var(--card);border-radius:10px;padding:3rem 2rem;box-shadow:var(--shadow);text-align:center;">
-      <div style="font-size:3rem;margin-bottom:1rem;">🏗️</div>
-      <div style="font-size:1.2rem;font-weight:600;margin-bottom:.5rem;">CUPC+报价计算器</div>
-      <div style="color:var(--muted);font-size:.9rem;">功能正在开发中，明天将填充内容。</div>
+
+    <!-- 认证类型 & 产品信息 -->
+    <div class="settings-bar" style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem;">
+      <div>
+        <label style="font-size:.78rem;color:var(--muted);margin-right:.3rem;">认证类型</label>
+        <select id="cupcCertType" onchange="updateCupcDefaults()" style="padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem;">
+          <option value="cupc">CUPC</option>
+          <option value="nsf61">NSF61</option>
+          <option value="nsf372">NSF372</option>
+          <option value="cupc+nsf61">CUPC + NSF61</option>
+          <option value="cupc+nsf372">CUPC + NSF372</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:.78rem;color:var(--muted);margin-right:.3rem;">产品类型</label>
+        <select id="cupcProductType" style="padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem;">
+          <option value="kitchen">厨房龙头</option>
+          <option value="basin">台盆龙头</option>
+          <option value="shower">花洒</option>
+          <option value="valve">阀门</option>
+          <option value="other">其他卫浴</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:.78rem;color:var(--muted);margin-right:.3rem;">型号数量</label>
+        <input type="number" id="cupcModelCount" value="1" min="1" style="width:60px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem;" oninput="recalcCupc()">
+      </div>
+      <div>
+        <label style="font-size:.78rem;color:var(--muted);margin-right:.3rem;">附加列名公司数</label>
+        <input type="number" id="cupcExtraCompanies" value="0" min="0" style="width:60px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem;" oninput="recalcCupc()">
+      </div>
+      <div>
+        <label style="font-size:.78rem;color:var(--muted);margin-right:.3rem;">K证数量</label>
+        <input type="number" id="cupcKCount" value="0" min="0" style="width:60px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem;" oninput="recalcCupc()">
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="resetCupcForm()">重置</button>
     </div>
+
+    <!-- 费用明细 -->
+    <div class="two-col">
+      <div class="left-col">
+        <div class="panel-title">费用明细 <span>可点击修改数值</span></div>
+        <div id="cupcFeeBody" style="display:flex;flex-direction:column;gap:.5rem;"></div>
+      </div>
+      <div class="right-col">
+        <div class="panel-title">费用汇总 <span>USD</span></div>
+        <div style="background:var(--card);border-radius:10px;padding:1rem;box-shadow:var(--shadow);margin-bottom:1rem;">
+          <div id="cupcSummary" style="display:flex;flex-direction:column;gap:.6rem;"></div>
+          <div style="border-top:2px solid var(--border);margin-top:.75rem;padding-top:.75rem;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:700;font-size:1.1rem;">费用合计</span>
+            <span id="cupcTotalUSD" style="font-weight:700;font-size:1.35rem;color:var(--accent);">$0</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.3rem;">
+            <span style="font-size:.8rem;color:var(--muted);">折合人民币（约 7.2）</span>
+            <span id="cupcTotalCNY" style="font-weight:600;font-size:1.05rem;color:var(--rg2);">¥0</span>
+          </div>
+        </div>
+        <div style="background:var(--card);border-radius:10px;padding:1rem;box-shadow:var(--shadow);">
+          <div class="panel-title" style="margin-bottom:.5rem;">年费预估 <span>每年维护成本</span></div>
+          <div id="cupcAnnualBody" style="display:flex;flex-direction:column;gap:.4rem;font-size:.85rem;"></div>
+          <div style="border-top:1px solid var(--border);margin-top:.5rem;padding-top:.5rem;display:flex;justify-content:space-between;">
+            <span style="font-weight:600;">年费合计</span>
+            <span id="cupcAnnualTotal" style="font-weight:700;color:var(--accent);">$0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </main>
 </div><!-- end cupc-module -->
 
@@ -3826,6 +3889,143 @@ setupDragDrop('productImgDrop', 'productImgInput');
 buildCFRefTable();
 loadExample();
 loadQwenVlConfig();
+
+/* ═══════════════════════════════════════════════
+   CUPC+报价计算器
+   ═══════════════════════════════════════════════ */
+
+// 费用项配置（key: {label, default, unit, note, editable}）
+const CUPC_FEE_ITEMS = {
+  apply:     { label: '申请费', default: 1195, unit: 'USD', note: '固定费用', editable: true },
+  cert:      { label: '证书费（目录登入费）', default: 1595, unit: 'USD', note: '固定费用', editable: true },
+  eval:      { label: '型号评估费', default: 0, unit: 'USD', note: '按型号数量计算', editable: true, perModel: true },
+  factory:   { label: '工厂审核费（初审）', default: 3365, unit: 'USD', note: '含初审和年审验厂', editable: true },
+  travel:    { label: '年审差旅费', default: 700, unit: 'USD', note: '每年一次', editable: true },
+  badge:     { label: '年审标识费', default: 1000, unit: 'USD', note: '每年一次', editable: true },
+  suffix:    { label: '后缀费', default: 1000, unit: 'USD', note: '颜色/尺寸差异', editable: true },
+  extra:     { label: '附加列名费', default: 0, unit: 'USD', note: '每个公司$1,645', editable: true, perCompany: true },
+  kcert:     { label: 'K证（影子证书）', default: 0, unit: 'USD', note: '每张$3,545', editable: true, perK: true },
+  toxic:     { label: '毒性报告审核费', default: 0, unit: 'USD', note: '做NSF61才有此项', editable: true },
+  test:      { label: '产品测试费', default: 0, unit: 'USD', note: '请自定义填写', editable: true },
+};
+
+// 认证类型默认后缀费
+const CUPC_SUFFIX_DEFAULTS = {
+  cupc: 1000,
+  nsf61: 650,
+  nsf372: 650,
+  'cupc+nsf61': 1000,
+  'cupc+nsf372': 1000,
+};
+
+// 年费配置
+const CUPC_ANNUAL_ITEMS = {
+  factory2: { label: '验厂费（2次/年）', base: 3365, times: 2 },
+  baseFee:  { label: '基础年费', base: 3030 },
+};
+
+function updateCupcDefaults() {
+  const cert = document.getElementById('cupcCertType').value;
+  const isCupc = cert.includes('cupc');
+  
+  // 更新后缀费默认值
+  CUPC_FEE_ITEMS.suffix.default = CUPC_SUFFIX_DEFAULTS[cert] || 1000;
+  
+  // 更新年费基础年费
+  CUPC_ANNUAL_ITEMS.baseFee.base = isCupc ? 4080 : 3030;
+  
+  renderCupcForm();
+  recalcCupc();
+}
+
+function renderCupcForm() {
+  const body = document.getElementById('cupcFeeBody');
+  if (!body) return;
+  
+  body.innerHTML = '';
+  Object.keys(CUPC_FEE_ITEMS).forEach(key => {
+    const item = CUPC_FEE_ITEMS[key];
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;background:var(--card);border:1px solid var(--border);border-radius:6px;';
+    row.innerHTML = `
+      <div style="flex:1;min-width:120px;">
+        <div style="font-weight:600;font-size:.85rem;">${item.label}</div>
+        <div style="font-size:.72rem;color:var(--muted);">${item.note}</div>
+      </div>
+      <input type="number" id="cupc_${key}" value="${item.default}" min="0" step="1"
+        style="width:90px;padding:.35rem .5rem;border:1px solid var(--border);border-radius:4px;font-size:.85rem;text-align:right;"
+        oninput="recalcCupc()">
+      <span style="font-size:.78rem;color:var(--muted);width:40px;">${item.unit}</span>
+    `;
+    body.appendChild(row);
+  });
+}
+
+function recalcCupc() {
+  const modelCount = parseInt(document.getElementById('cupcModelCount').value) || 1;
+  const extraCompanies = parseInt(document.getElementById('cupcExtraCompanies').value) || 0;
+  const kCount = parseInt(document.getElementById('cupcKCount').value) || 0;
+  
+  let total = 0;
+  const summary = document.getElementById('cupcSummary');
+  summary.innerHTML = '';
+  
+  Object.keys(CUPC_FEE_ITEMS).forEach(key => {
+    const item = CUPC_FEE_ITEMS[key];
+    let val = parseFloat(document.getElementById('cupc_' + key)?.value) || 0;
+    
+    // 自动乘以数量
+    if (item.perModel) val *= modelCount;
+    if (item.perCompany) val *= extraCompanies;
+    if (item.perK) val *= kCount;
+    
+    total += val;
+    
+    const line = document.createElement('div');
+    line.style.cssText = 'display:flex;justify-content:space-between;font-size:.85rem;';
+    let displayLabel = item.label;
+    if (item.perModel && modelCount > 1) displayLabel += ` × ${modelCount}`;
+    if (item.perCompany && extraCompanies > 0) displayLabel += ` × ${extraCompanies}`;
+    if (item.perK && kCount > 0) displayLabel += ` × ${kCount}`;
+    line.innerHTML = `<span>${displayLabel}</span><span style="font-weight:600;">$${val.toLocaleString()}</span>`;
+    summary.appendChild(line);
+  });
+  
+  document.getElementById('cupcTotalUSD').textContent = '$' + total.toLocaleString();
+  document.getElementById('cupcTotalCNY').textContent = '¥' + Math.round(total * 7.2).toLocaleString();
+  
+  // 年费计算
+  const annualBody = document.getElementById('cupcAnnualBody');
+  annualBody.innerHTML = '';
+  let annualTotal = 0;
+  
+  Object.keys(CUPC_ANNUAL_ITEMS).forEach(key => {
+    const item = CUPC_ANNUAL_ITEMS[key];
+    const val = item.base * (item.times || 1);
+    annualTotal += val;
+    const line = document.createElement('div');
+    line.style.cssText = 'display:flex;justify-content:space-between;';
+    let label = item.label;
+    if (item.times) label += ` ($${item.base} × ${item.times})`;
+    line.innerHTML = `<span>${label}</span><span style="font-weight:600;">$${val.toLocaleString()}</span>`;
+    annualBody.appendChild(line);
+  });
+  
+  document.getElementById('cupcAnnualTotal').textContent = '$' + annualTotal.toLocaleString();
+}
+
+function resetCupcForm() {
+  document.getElementById('cupcCertType').value = 'cupc';
+  document.getElementById('cupcProductType').value = 'kitchen';
+  document.getElementById('cupcModelCount').value = 1;
+  document.getElementById('cupcExtraCompanies').value = 0;
+  document.getElementById('cupcKCount').value = 0;
+  updateCupcDefaults();
+}
+
+// 初始化CUPC表单
+renderCupcForm();
+recalcCupc();
 </script>
 </body>
 </html>
