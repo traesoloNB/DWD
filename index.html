@@ -21,6 +21,33 @@
       --shadow: 0 2px 12px rgba(0,0,0,.08);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* 模块选择卡片 */
+    .module-card {
+      flex: 1;
+      max-width: 280px;
+      background: var(--card);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all .2s;
+      box-shadow: var(--shadow);
+      user-select: none;
+    }
+    .module-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    }
+    .module-card.active {
+      border-color: var(--accent);
+      background: linear-gradient(135deg, #1565c0, #0d47a1);
+      color: #fff;
+    }
+    .module-card.active div { color: #fff; }
+
     body {
       font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
       background: var(--bg);
@@ -440,6 +467,24 @@
 </head>
 <body>
 
+<!-- ═══════ 模块选择卡片 ═══════ -->
+<div id="moduleSelector" style="max-width:1400px;margin:0 auto;padding:1.5rem 1.25rem 0;">
+  <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
+    <div class="module-card active" onclick="switchModule('dwd')" id="cardDwd">
+      <div style="font-size:2rem;margin-bottom:.5rem;">🧪</div>
+      <div style="font-size:1.1rem;font-weight:700;margin-bottom:.3rem;">DWD 计算器</div>
+      <div style="font-size:.8rem;opacity:.75;">水暖产品风险等级计算</div>
+    </div>
+    <div class="module-card" onclick="switchModule('cupc')" id="cardCupc">
+      <div style="font-size:2rem;margin-bottom:.5rem;">📋</div>
+      <div style="font-size:1.1rem;font-weight:700;margin-bottom:.3rem;">CUPC+报价计算器</div>
+      <div style="font-size:.8rem;opacity:.75;">功能开发中</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ DWD 模块 ═══════ -->
+<div id="dwd-module">
 <header>
   <div>
     <h1>DWD RG 风险等级计算器</h1>
@@ -752,6 +797,24 @@
     <div id="cfRefContent" style="margin-top:.75rem;font-size:.75rem;overflow-x:auto"></div>
   </details>
 </main>
+</div><!-- end dwd-module -->
+
+<!-- ═══════ CUPC 模块 ═══════ -->
+<div id="cupc-module" style="display:none;">
+  <header>
+    <div>
+      <h1>CUPC+报价计算器</h1>
+      <p>功能开发中，敬请期待</p>
+    </div>
+  </header>
+  <main style="max-width:1400px;margin:0 auto;padding:1.25rem;">
+    <div style="background:var(--card);border-radius:10px;padding:3rem 2rem;box-shadow:var(--shadow);text-align:center;">
+      <div style="font-size:3rem;margin-bottom:1rem;">🏗️</div>
+      <div style="font-size:1.2rem;font-weight:600;margin-bottom:.5rem;">CUPC+报价计算器</div>
+      <div style="color:var(--muted);font-size:.9rem;">功能正在开发中，明天将填充内容。</div>
+    </div>
+  </main>
+</div><!-- end cupc-module -->
 
 <script>
 /* ── CF / Product Group / RG 数据（CID EU 2024/368 Table 1） ── */
@@ -3738,6 +3801,23 @@ function formatRawJson() {
 
 // Init
 document.getElementById('productType').addEventListener('change', buildCFRefTable);
+
+// ═══════ 模块切换 ═══════
+function switchModule(name) {
+  document.getElementById('dwd-module').style.display = name === 'dwd' ? '' : 'none';
+  document.getElementById('cupc-module').style.display = name === 'cupc' ? '' : 'none';
+  document.getElementById('moduleSelector').style.display = 'none';
+  
+  document.getElementById('cardDwd').classList.toggle('active', name === 'dwd');
+  document.getElementById('cardCupc').classList.toggle('active', name === 'cupc');
+}
+
+// 返回模块选择（从header按钮调用）
+function backToSelector() {
+  document.getElementById('dwd-module').style.display = 'none';
+  document.getElementById('cupc-module').style.display = 'none';
+  document.getElementById('moduleSelector').style.display = '';
+}
 document.getElementById('application').addEventListener('change', () => { recalc(); buildCFRefTable(); });
 document.getElementById('storageApp').addEventListener('change', () => { recalc(); buildCFRefTable(); });
 
